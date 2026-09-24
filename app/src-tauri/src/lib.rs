@@ -276,8 +276,12 @@ pub fn run() {
 
             let handle = app.handle().clone();
             app.deep_link().on_open_url(move |event| {
-                if let Some(target) = event.urls().iter().find_map(parse_open_url) {
+                // Any `dai://` link (a bare one from Raycast's "Start DAI" too) brings the app forward.
+                let urls = event.urls();
+                if urls.iter().any(|u| u.scheme() == "dai") {
                     show_main_window(&handle);
+                }
+                if let Some(target) = urls.iter().find_map(parse_open_url) {
                     let _ = handle.emit(
                         EVENT,
                         DaiEvent::Open {
@@ -311,4 +315,32 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running DAI");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn url(s: &str) -> tauri::Url {
+        tauri::Url::parse(s).unwrap()
+    }
+
+    #[test]
+    fn parses_open_links() {
+        let t = parse_open_url(&url(
+            "dai://open?docset=react&path=reference/react/useeffect",
+        ))
+        .unwrap();
+        assert_eq!(
+            (t.docset.as_str(), t.path.as_str()),
+            ("react", "reference/react/useeffect")
+        );
+    }
+
+    #[test]
+    fn bare_link_is_dai_but_opens_no_page() {
+        let bare = url("dai://");
+        assert_eq!(bare.scheme(), "dai");
+        assert!(parse_open_url(&bare).is_none());
+    }
 }

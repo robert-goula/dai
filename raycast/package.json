@@ -1,0 +1,44 @@
+{
+  "$schema": "https://www.raycast.com/schemas/extension.json",
+  "name": "dai",
+  "title": "DAI",
+  "description": "Search your local DAI docs and snippets.",
+  "icon": "icon.png",
+  "author": "robert-goula",
+  "license": "MIT",
+  "platforms": ["macOS"],
+  "categories": ["Developer Tools", "Documentation"],
+  "commands": [
+    {
+      "name": "search-docs",
+      "title": "Search Docs",
+      "description": "Search installed docsets.",
+      "mode": "view"
+    }
+  ],
+  "preferences": [
+    {
+      "name": "dataDir",
+      "title": "DAI data folder",
+      "description": "Where DAI keeps daemon.json and token. Leave empty for the default (~/Library/Application Support/dai). Set it if you use $DAI_HOME.",
+      "type": "directory",
+      "required": false
+    }
+  ],
+  "dependencies": {
+    "@raycast/api": "^2.4.1",
+    "@raycast/utils": "^2.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.17",
+    "@types/react": "19.0.10",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.1"
+  },
+  "scripts": {
+    "dev": "ray develop",
+    "build": "ray build -e dist",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  }
+}
