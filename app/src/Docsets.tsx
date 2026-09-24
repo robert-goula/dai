@@ -141,7 +141,7 @@ export function Docsets({ installState }: { installState: InstallState }) {
               {installing.has(d.id) ? (
                 <span className={styles.busy}>{installing.get(d.id)}</span>
               ) : (
-                <button onClick={() => install.mutate(d.id)}>Install</button>
+                <InstallButton entry={d} onInstall={(id) => install.mutate(id)} />
               )}
             </li>
           ))}
@@ -159,4 +159,33 @@ function formatSize(bytes: number): string {
   return bytes >= 1e6
     ? `${(bytes / 1e6).toFixed(1)} MB`
     : `${Math.max(1, Math.round(bytes / 1e3))} KB`;
+}
+
+/** Install button, with a version picker for docsets that offer older versions. */
+function InstallButton({
+  entry,
+  onInstall,
+}: {
+  entry: CatalogEntry;
+  onInstall: (id: string) => void;
+}) {
+  const [version, setVersion] = useState("");
+  if (entry.versions.length === 0) {
+    return <button onClick={() => onInstall(entry.id)}>Install</button>;
+  }
+  return (
+    <span className={styles.install}>
+      <select value={version} onChange={(e) => setVersion(e.target.value)} aria-label="Version">
+        <option value="">{entry.version || "latest"}</option>
+        {entry.versions.map((v) => (
+          <option key={v} value={v}>
+            {v}
+          </option>
+        ))}
+      </select>
+      <button onClick={() => onInstall(version ? `${entry.id}@${version}` : entry.id)}>
+        Install
+      </button>
+    </span>
+  );
 }

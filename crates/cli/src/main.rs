@@ -53,6 +53,14 @@ enum Command {
         /// Print JSON.
         #[arg(long)]
         json: bool,
+        /// Prefer docs matching this project's dependency versions.
+        #[arg(short, long)]
+        project: Option<std::path::PathBuf>,
+    },
+    /// Show how a project's dependencies map to installed docsets.
+    Project {
+        /// Project folder (defaults to the current directory).
+        path: Option<std::path::PathBuf>,
     },
     /// Print a page as markdown.
     Show {
@@ -199,11 +207,15 @@ async fn main() -> Result<()> {
                 docsets,
                 limit,
                 json,
+                project,
             },
             c,
         ) => {
             let started = Instant::now();
-            let hits = c.search(&query.join(" "), &docsets, limit).await?;
+            let project = project.map(std::path::absolute).transpose()?;
+            let hits = c
+                .search(&query.join(" "), &docsets, project.as_deref(), limit)
+                .await?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&hits)?);
                 return Ok(());
@@ -298,6 +310,13 @@ async fn main() -> Result<()> {
                     lib.id, lib.title, lib.total_tokens, lib.description
                 );
             }
+        }
+        (Command::Project { path }, c) => {
+            let path = std::path::absolute(path.unwrap_or_else(|| ".".into()))?;
+            print!(
+                "{}",
+                dai_daemon::mcp::project_summary(&c.project(&path).await?)
+            );
         }
         (Command::Serve { .. } | Command::Mcp | Command::Stop, _) => unreachable!(),
     }

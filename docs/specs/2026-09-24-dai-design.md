@@ -71,10 +71,10 @@ app ──────▶ │ event stream /api/events (SSE) ← open_in_app, up
 ### MCP tools (rmcp, stdio + streamable HTTP)
 
 - `list_docsets`: installed docsets with versions.
-- `search_docs(query, docsets?, version?, project_path?, limit)`: chunk hits with source path/URL.
+- `search_docs(query, docsets?, project_path?, limit)`: chunk hits with source path/URL. With `project_path`, installed docsets for other versions of the project's dependencies are skipped when a matching version is installed. The output starts with notes on which versions were used, or warns about mismatches with the `dai install` fix.
 - `get_doc(docset, path, anchor?)`: full markdown for one entry, with a size limit and pagination.
 - `search_snippets(query?, language?, tag?)` (returns code inline) / `get_snippet(id)` / `save_snippet(title, code, language, …)`. Saving only creates new files; it never overwrites.
-- `resolve_project_versions(project_path)`: maps a project's dependencies to installed docset versions (Phase 6).
+- `resolve_project_versions(project_path)`: reads package.json (plus `node_modules` versions), Cargo.toml (workspace members plus Cargo.lock), go.mod, and pyproject.toml/requirements.txt, including language/runtime versions. Maps them to installed docsets (matches / different version / unknown) and suggests catalog ids to install (a DevDocs pin like `react~18`, else a Dash version like `dash:React@18.3.1`). Also available as `dai project [path]`.
 - `open_in_app(docset, path)`: the daemon emits an SSE event, and the app focuses and navigates. If the app isn't running, the daemon launches it via the `dai://open?...` deep link (Tauri deep-link plugin). The tool description says to use it only when the user asks to see something.
 - Context7 is **not** exposed over MCP (agents have their own Context7 MCP).
 
@@ -109,7 +109,7 @@ Re-running a generator counts as an "update" (`dai update md:<slug>`, or Regener
 3. **Dash/Zeal docsets.** Zeal catalog, streamed `.tgz` install with progress events, dsidx import, the same normalize/index pipeline.
 4. **Snippets.** Store, watcher, index, MCP snippet tools (incl. `save_snippet`), CLI, app editor.
 5. **Generation + Context7.** Markdown docset format; the llms.txt, repo, folder, and Context7 generators; `dai generate`; the app's Generate form and Context7 panel with snapshot-to-docset.
-6. **Version awareness.** Manifest parsers, `resolve_project_versions`, `project_path` on `search_docs`, side-by-side installs of multiple versions.
+6. **Version awareness.** Manifest parsers, name and version matching, `resolve_project_versions`, `project_path` on `search_docs`, and side-by-side Dash versions (`dash:<name>@<version>`, with a version picker in the app). DevDocs already has versioned ids. Pinned docsets are never flagged as outdated. Dash archives get portable paths on extraction (e.g. `127.0.0.1:3000` → `127.0.0.1_3000`, for Windows), and symlinks/hardlinks are skipped.
 
 Separate later plans: **Raycast extension** (a thin client over `/api`), **hybrid/semantic search**, **signed installers and auto-update** (Tauri updater, code signing).
 

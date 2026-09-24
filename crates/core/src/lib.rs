@@ -9,6 +9,7 @@ pub mod markdown;
 mod net;
 pub mod normalize;
 pub mod paths;
+pub mod project;
 pub mod snippets;
 pub mod store;
 

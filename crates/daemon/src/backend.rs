@@ -1,12 +1,14 @@
 //! Where MCP tools get their data: the library in-process (inside the daemon)
 //! or the daemon over HTTP (the `dai mcp` stdio server).
 
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context, Result};
 use dai_core::index::Hit;
+use dai_core::project::ProjectReport;
 use dai_core::snippets::{Snippet, SnippetInput};
 use dai_core::store::Docset;
 use dai_core::{DocPage, Library};
@@ -94,11 +96,24 @@ impl Backend {
         &self,
         query: String,
         docsets: Vec<String>,
+        project: Option<PathBuf>,
         limit: usize,
     ) -> Result<Vec<Hit>> {
         match self {
-            Self::Local(l) => blocking(&l.lib, move |l| l.search(&query, &docsets, limit)).await,
-            Self::Remote(c) => c.search(&query, &docsets, limit).await,
+            Self::Local(l) => {
+                blocking(&l.lib, move |l| {
+                    l.search_in(&query, &docsets, project.as_deref(), limit)
+                })
+                .await
+            }
+            Self::Remote(c) => c.search(&query, &docsets, project.as_deref(), limit).await,
+        }
+    }
+
+    pub async fn project(&self, path: PathBuf) -> Result<ProjectReport> {
+        match self {
+            Self::Local(l) => blocking(&l.lib, move |l| l.project_with_suggestions(&path)).await,
+            Self::Remote(c) => c.project(&path).await,
         }
     }
 

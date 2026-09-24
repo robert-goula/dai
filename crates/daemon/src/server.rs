@@ -14,6 +14,7 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use dai_core::project::ProjectReport;
 use dai_core::snippets::{Snippet, SnippetInput, slugify};
 use dai_core::store::Docset;
 use dai_core::{Library, Progress};
@@ -72,6 +73,7 @@ pub async fn serve(home: &Path, port: u16) -> Result<()> {
         .route("/api/outdated", get(outdated))
         .route("/api/search", get(search))
         .route("/api/doc", get(get_doc))
+        .route("/api/project", get(project))
         .route("/api/generate", post(generate_docset))
         .route("/api/context7/libraries", get(context7_libraries))
         .route("/api/context7/docs", get(context7_docs))
@@ -407,6 +409,8 @@ struct SearchParams {
     docsets: String,
     #[serde(default = "default_limit")]
     limit: usize,
+    /// Project folder: prefer docs matching its dependency versions.
+    project: Option<PathBuf>,
 }
 
 fn default_limit() -> usize {
@@ -424,7 +428,25 @@ async fn search(
         .map(String::from)
         .collect();
     Ok(Json(
-        blocking(&s.local.lib, move |l| l.search(&p.q, &docsets, p.limit)).await?,
+        blocking(&s.local.lib, move |l| {
+            l.search_in(&p.q, &docsets, p.project.as_deref(), p.limit)
+        })
+        .await?,
+    ))
+}
+
+#[derive(Deserialize)]
+struct ProjectParams {
+    path: PathBuf,
+}
+
+/// A project's dependencies matched to installed docsets, with install suggestions.
+async fn project(
+    State(s): State<AppState>,
+    Query(p): Query<ProjectParams>,
+) -> ApiResult<Json<ProjectReport>> {
+    Ok(Json(
+        blocking(&s.local.lib, move |l| l.project_with_suggestions(&p.path)).await?,
     ))
 }
 

@@ -11,6 +11,11 @@ use serde::Deserialize;
 
 use dai_core::snippets::SnippetInput;
 
+use std::path::PathBuf;
+
+use dai_core::index::Hit;
+use dai_core::project::{Dependency, ProjectReport};
+
 use crate::backend::{Backend, OpenOutcome};
 
 const MAX_LIMIT: usize = 50;
@@ -35,6 +40,16 @@ pub struct SearchArgs {
     docsets: Vec<String>,
     /// Max results (default 10, max 50).
     limit: Option<usize>,
+    /// Absolute path of the project you're working in. Results then prefer
+    /// docs for the versions in its package.json / Cargo.toml / go.mod /
+    /// pyproject.toml, and version mismatches are flagged.
+    project_path: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ProjectArgs {
+    /// Absolute path of the project (or any folder inside it).
+    project_path: String,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -81,18 +96,26 @@ impl DaiMcp {
             return Err(ErrorData::invalid_params("query must not be empty", None));
         }
         let limit = args.limit.unwrap_or(10).clamp(1, MAX_LIMIT);
-        let hits = match self
+        let project = args.project_path.map(PathBuf::from);
+        let search = self
             .backend
-            .search(args.query.clone(), args.docsets, limit)
-            .await
-        {
+            .search(args.query.clone(), args.docsets, project.clone(), limit);
+        let report = async {
+            match &project {
+                Some(p) => self.backend.project(p.clone()).await.ok(),
+                None => None,
+            }
+        };
+        let (hits, report) = tokio::join!(search, report);
+        let hits = match hits {
             Ok(h) => h,
             Err(e) => return Ok(tool_error(e)),
         };
+        let mut out = report.map(|r| version_notes(&r, &hits)).unwrap_or_default();
         if hits.is_empty() {
-            return Ok(text(format!("No results for `{}`.", args.query)));
+            out.push_str(&format!("No results for `{}`.", args.query));
+            return Ok(text(out));
         }
-        let mut out = String::new();
         for (i, h) in hits.iter().enumerate() {
             let label = if h.kind == "entry" {
                 format!("[{}]", h.entry_type)
@@ -117,6 +140,26 @@ impl DaiMcp {
             }
         }
         Ok(text(out))
+    }
+
+    #[tool(
+        description = "Match a project's dependencies (package.json, Cargo.toml, go.mod, \
+                          pyproject.toml, requirements.txt) and language version to installed \
+                          docsets, flag version mismatches, and suggest docsets to install."
+    )]
+    async fn resolve_project_versions(
+        &self,
+        Parameters(args): Parameters<ProjectArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let report = match self
+            .backend
+            .project(PathBuf::from(&args.project_path))
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => return Ok(tool_error(e)),
+        };
+        Ok(text(project_summary(&report)))
     }
 
     #[tool(
@@ -269,6 +312,116 @@ impl DaiMcp {
 
 const SNIPPET_PREVIEW_CHARS: usize = 1500;
 
+fn dep_label(d: &Dependency) -> String {
+    match (&d.resolved, d.spec.is_empty()) {
+        (Some(r), _) => format!("{} {r}", d.name),
+        (None, false) => format!("{} {}", d.name, d.spec),
+        (None, true) => d.name.clone(),
+    }
+}
+
+/// Lines explaining version choices relevant to these hits: which pinned
+/// docset was used, and which results are for a different version.
+fn version_notes(report: &ProjectReport, hits: &[Hit]) -> String {
+    let mut out = String::new();
+    for d in &report.covered {
+        let Some(best) = d.installed.first() else {
+            continue;
+        };
+        let in_hits = |id: &str| hits.iter().any(|h| h.docset == id);
+        match best.matches {
+            // Only mention docsets these results came from, so unrelated
+            // dependencies (e.g. the runtime) don't add noise to every search.
+            Some(true)
+                if in_hits(&best.id) && d.installed.iter().any(|m| m.matches == Some(false)) =>
+            {
+                let _ = writeln!(
+                    out,
+                    "Using {} for {} (other versions skipped).",
+                    best.id,
+                    dep_label(&d.dependency)
+                );
+            }
+            Some(false) if d.installed.iter().any(|m| in_hits(&m.id)) => {
+                let have: Vec<String> = d
+                    .installed
+                    .iter()
+                    .map(|m| format!("{} ({})", m.id, m.version))
+                    .collect();
+                let fix = report
+                    .suggestions
+                    .iter()
+                    .find(|s| s.dependency == d.dependency.name)
+                    .map_or("check other sources".to_string(), |s| {
+                        format!("the user can run `dai install {}`", s.id)
+                    });
+                let _ = writeln!(
+                    out,
+                    "Warning: project uses {}, but installed docs are {}; {fix}.",
+                    dep_label(&d.dependency),
+                    have.join(", ")
+                );
+            }
+            _ => {}
+        }
+    }
+    if !out.is_empty() {
+        out.push('\n');
+    }
+    out
+}
+
+pub fn project_summary(r: &ProjectReport) -> String {
+    let mut out = format!(
+        "Project: {}\n\nCovered by installed docs:\n",
+        r.root.display()
+    );
+    if r.covered.is_empty() {
+        out.push_str("- (none)\n");
+    }
+    for d in &r.covered {
+        let docs: Vec<String> = d
+            .installed
+            .iter()
+            .map(|m| {
+                let mark = match m.matches {
+                    Some(true) => "matches",
+                    Some(false) => "different version",
+                    None => "version unknown",
+                };
+                format!("{} ({}, {mark})", m.id, m.version)
+            })
+            .collect();
+        let _ = writeln!(out, "- {}: {}", dep_label(&d.dependency), docs.join("; "));
+    }
+    if !r.suggestions.is_empty() {
+        out.push_str("\nAvailable to install (the user can run `dai install <id>`):\n");
+        for s in &r.suggestions {
+            let _ = writeln!(out, "- {} → {} ({})", s.dependency, s.id, s.version);
+        }
+    }
+    let suggested: Vec<&str> = r
+        .suggestions
+        .iter()
+        .map(|s| s.dependency.as_str())
+        .collect();
+    let rest: Vec<String> = r
+        .uncovered
+        .iter()
+        .filter(|d| d.ecosystem != "language" && !suggested.contains(&d.name.as_str()))
+        .map(dep_label)
+        .collect();
+    if !rest.is_empty() {
+        let _ = writeln!(
+            out,
+            "\nNo docset found ({}): {}",
+            rest.len(),
+            rest.join(", ")
+        );
+    }
+    out
+}
+
 #[derive(Deserialize, JsonSchema)]
 pub struct SnippetSearchArgs {
     /// Keywords matched against title, tags, description, and code. Omit to list recent ones.
@@ -319,6 +472,8 @@ pub struct OpenArgs {
 frameworks, libraries). Use search_docs with a symbol (e.g. `useEffect`, `Vec::push`) or a few \
 keywords, then get_doc with a hit's docset and path to read the page as markdown. Use \
 list_docsets to see what's installed; for anything not installed, use other sources. \
+Pass project_path (the project you're working in) to search_docs so results match the project's \
+dependency versions; resolve_project_versions shows the full mapping. \
 The user also keeps reference code snippets: check search_snippets for their preferred patterns \
 before writing common code."
 )]

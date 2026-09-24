@@ -77,7 +77,7 @@ async fn search(
     daemon
         .client()
         .await?
-        .search(&query, &docsets, limit)
+        .search(&query, &docsets, None, limit)
         .await
         .map_err(err)
 }

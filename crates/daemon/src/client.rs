@@ -9,6 +9,7 @@ use dai_core::CatalogEntry;
 use dai_core::DocPage;
 use dai_core::generate;
 use dai_core::index::Hit;
+use dai_core::project::ProjectReport;
 use dai_core::snippets::{Snippet, SnippetInput};
 use dai_core::store::Docset;
 use reqwest::{Method, RequestBuilder, StatusCode};
@@ -108,13 +109,28 @@ impl Client {
         send(self.req(Method::DELETE, &format!("/api/docsets/{id}"))).await
     }
 
-    pub async fn search(&self, query: &str, docsets: &[String], limit: usize) -> Result<Vec<Hit>> {
-        let params = [
+    pub async fn search(
+        &self,
+        query: &str,
+        docsets: &[String],
+        project: Option<&Path>,
+        limit: usize,
+    ) -> Result<Vec<Hit>> {
+        let mut params = vec![
             ("q", query.to_string()),
             ("docsets", docsets.join(",")),
             ("limit", limit.to_string()),
         ];
+        params.extend(project.map(|p| ("project", p.to_string_lossy().into_owned())));
         send(self.req(Method::GET, "/api/search").query(&params)).await
+    }
+
+    pub async fn project(&self, path: &Path) -> Result<ProjectReport> {
+        send(
+            self.req(Method::GET, "/api/project")
+                .query(&[("path", path)]),
+        )
+        .await
     }
 
     pub async fn get_doc(

@@ -141,7 +141,14 @@ impl Index {
 
     /// Ranked search. Exact entry-name matches win, then name terms (with the
     /// last term as a prefix for type-ahead), then headings, then body text.
-    pub fn search(&self, query: &str, docsets: &[String], limit: usize) -> Result<Vec<Hit>> {
+    /// `docsets` limits the search (empty = all docs); `exclude` drops docsets.
+    pub fn search(
+        &self,
+        query: &str,
+        docsets: &[String],
+        exclude: &[String],
+        limit: usize,
+    ) -> Result<Vec<Hit>> {
         let f = self.f;
         let mut should: Vec<(Occur, Box<dyn Query>)> = Vec::new();
         let mut boosted = |q: Box<dyn Query>, boost: f32| {
@@ -208,16 +215,20 @@ impl Index {
                 (Occur::Must, q),
                 (Occur::Must, Box::new(BooleanQuery::new(filter))),
             ]));
-        } else {
-            let snippets: Box<dyn Query> = Box::new(TermQuery::new(
-                Term::from_field_text(f.docset, SNIPPETS_DOCSET),
+        }
+        let skip = exclude
+            .iter()
+            .map(String::as_str)
+            .chain(docsets.is_empty().then_some(SNIPPETS_DOCSET));
+        let mut clauses = vec![(Occur::Must, q)];
+        for d in skip {
+            let tq: Box<dyn Query> = Box::new(TermQuery::new(
+                Term::from_field_text(f.docset, d),
                 IndexRecordOption::Basic,
             ));
-            q = Box::new(BooleanQuery::new(vec![
-                (Occur::Must, q),
-                (Occur::MustNot, snippets),
-            ]));
+            clauses.push((Occur::MustNot, tq));
         }
+        let q: Box<dyn Query> = Box::new(BooleanQuery::new(clauses));
 
         let searcher = self.reader.searcher();
         let top = searcher.search(&q, &TopDocs::with_limit(limit).order_by_score())?;

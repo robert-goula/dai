@@ -19,6 +19,8 @@ export type CatalogEntry = {
   /** Download size in bytes. */
   size: number;
   mtime: number;
+  /** Older versions installable side by side as `<id>@<version>` (Dash only). */
+  versions: string[];
 };
 
 export type Hit = {

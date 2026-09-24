@@ -17,6 +17,7 @@ use crate::index::SNIPPETS_DOCSET;
 use crate::index::{Hit, Index, IndexDoc};
 use crate::markdown;
 use crate::normalize::{chunk_markdown, html_to_markdown, main_content};
+use crate::project::{self, ProjectReport};
 use crate::snippets::{Snippet, SnippetInput, SnippetStore, slugify};
 use crate::store::{self, Docset, Entry, Page, Store};
 
@@ -36,6 +37,10 @@ pub struct CatalogEntry {
     pub size: u64,
     /// DevDocs modification time (0 for Dash, which is versioned instead).
     pub mtime: i64,
+    /// Older versions installable side by side as `<id>@<version>` (Dash only;
+    /// DevDocs lists versions as separate ids like `react~18`).
+    #[serde(default)]
+    pub versions: Vec<String>,
 }
 
 /// Install progress, for the app's progress display.
@@ -101,6 +106,7 @@ impl Library {
                 source: "devdocs".into(),
                 size: d.db_size,
                 mtime: d.mtime,
+                versions: vec![],
             });
         let dash = self
             .dash_catalog(refresh)?
@@ -112,6 +118,7 @@ impl Library {
                 source: "dash".into(),
                 size: d.size,
                 mtime: 0,
+                versions: d.versions.iter().skip(1).cloned().collect(),
             });
         Ok(devdocs.chain(dash).collect())
     }
@@ -165,7 +172,9 @@ impl Library {
                 latest
                     .get(&ds.id)
                     .is_some_and(|c| match ds.source.as_str() {
-                        "dash" => !c.version.is_empty() && c.version != ds.version,
+                        "dash" => {
+                            !ds.id.contains('@') && !c.version.is_empty() && c.version != ds.version
+                        }
                         "devdocs" => c.mtime > ds.mtime,
                         // Generated docsets are only updated on request.
                         _ => false,
@@ -330,7 +339,13 @@ impl Library {
         Ok(ds)
     }
 
+    /// `name` is a Zeal name, optionally pinned: `React` or `React@18.3.1`.
+    /// Pinned versions install side by side with the latest.
     fn install_dash(&self, name: &str, progress: &(dyn Fn(Progress) + Sync)) -> Result<Docset> {
+        let (name, pinned) = match name.split_once('@') {
+            Some((n, v)) => (n, Some(v)),
+            None => (name, None),
+        };
         let doc = self
             .dash_catalog(false)?
             .into_iter()
@@ -338,11 +353,22 @@ impl Library {
             .with_context(|| {
                 format!("no docset `dash:{name}` in the catalog (see `dai catalog`)")
             })?;
+        if let Some(v) = pinned
+            && !doc.versions.iter().any(|x| x == v)
+        {
+            bail!(
+                "`dash:{name}` has no version {v}; available: {}",
+                doc.versions.join(", ")
+            );
+        }
         let root = self.dash_root();
         std::fs::create_dir_all(&root)?;
-        let dir = dash::dir_name(&doc.name);
+        let dir = dash::dir_name(&match pinned {
+            Some(v) => format!("{}@{v}", doc.name),
+            None => doc.name.clone(),
+        });
         let tgz = root.join(format!("{dir}.tgz.part"));
-        dash::download(&doc.name, &tgz, |bytes, total| {
+        dash::download(&doc.name, pinned, &tgz, |bytes, total| {
             progress(Progress::Download { bytes, total })
         })?;
         progress(Progress::Index);
@@ -354,9 +380,15 @@ impl Library {
         extracted?;
 
         let ds = Docset {
-            id: doc.id(),
-            version: doc.latest_version().to_string(),
-            name: doc.title,
+            id: match pinned {
+                Some(v) => format!("{}@{v}", doc.id()),
+                None => doc.id(),
+            },
+            version: pinned.unwrap_or(doc.latest_version()).to_string(),
+            name: match pinned {
+                Some(v) => format!("{} {v}", doc.title),
+                None => doc.title,
+            },
             source: "dash".into(),
             release: String::new(),
             mtime: 0,
@@ -463,7 +495,52 @@ impl Library {
     }
 
     pub fn search(&self, query: &str, docsets: &[String], limit: usize) -> Result<Vec<Hit>> {
-        self.index.search(query, docsets, limit)
+        self.index.search(query, docsets, &[], limit)
+    }
+
+    /// Search that prefers the project's versions: installed docsets for a
+    /// different version of one of its dependencies are skipped when a
+    /// matching version is installed.
+    pub fn search_for_project(
+        &self,
+        query: &str,
+        docsets: &[String],
+        project: &ProjectReport,
+        limit: usize,
+    ) -> Result<Vec<Hit>> {
+        self.index
+            .search(query, docsets, &project.excluded_docsets(), limit)
+    }
+
+    /// `search`, made project-aware when `project` is a path with manifests
+    /// (a path without any falls back to a plain search).
+    pub fn search_in(
+        &self,
+        query: &str,
+        docsets: &[String],
+        project: Option<&Path>,
+        limit: usize,
+    ) -> Result<Vec<Hit>> {
+        match project.map(|p| self.project(p)) {
+            Some(Ok(report)) => self.search_for_project(query, docsets, &report, limit),
+            _ => self.search(query, docsets, limit),
+        }
+    }
+
+    /// The project at `path` (or its nearest ancestor with a manifest), matched
+    /// against installed docsets.
+    pub fn project(&self, path: &Path) -> Result<ProjectReport> {
+        project::analyze(path, &self.installed()?)
+    }
+
+    /// `project` plus install suggestions from the catalog (which may be
+    /// fetched if it isn't cached yet).
+    pub fn project_with_suggestions(&self, path: &Path) -> Result<ProjectReport> {
+        let mut report = self.project(path)?;
+        if let Ok(catalog) = self.catalog(false) {
+            report.suggestions = project::suggest(&report, &catalog);
+        }
+        Ok(report)
     }
 
     /// A DevDocs page's original HTML, for the app's viewer.
@@ -559,7 +636,7 @@ impl Library {
         // Over-fetch so filtering still leaves `limit` results.
         let hits = self
             .index
-            .search(query, &[SNIPPETS_DOCSET.to_string()], limit * 4 + 10)?;
+            .search(query, &[SNIPPETS_DOCSET.to_string()], &[], limit * 4 + 10)?;
         let all = self.snippets.all();
         Ok(hits
             .iter()

@@ -52,9 +52,15 @@ pub fn catalog() -> Result<Vec<ZealDoc>> {
     Ok(serde_json::from_reader(res)?)
 }
 
-/// Streams the docset tarball to `dest`, reporting `(bytes, total)` as it goes.
-pub fn download(name: &str, dest: &Path, mut progress: impl FnMut(u64, Option<u64>)) -> Result<()> {
-    let url = format!("{DOWNLOAD_BASE}/{name}/latest");
+/// Streams the docset tarball (the latest, or a specific `version`) to `dest`,
+/// reporting `(bytes, total)` as it goes.
+pub fn download(
+    name: &str,
+    version: Option<&str>,
+    dest: &Path,
+    mut progress: impl FnMut(u64, Option<u64>),
+) -> Result<()> {
+    let url = format!("{DOWNLOAD_BASE}/{name}/{}", version.unwrap_or("latest"));
     let mut res = crate::net::client(None)?
         .get(&url)
         .send()?
@@ -77,15 +83,55 @@ pub fn download(name: &str, dest: &Path, mut progress: impl FnMut(u64, Option<u6
 }
 
 /// Extracts a docset tarball into `dest` and returns the `*.docset` directory.
+///
+/// Paths are made portable (see `portable_path`) so archives built on macOS
+/// (e.g. `127.0.0.1:3000/…`) extract on Windows too. Entries that would escape
+/// `dest`, and symlinks/hardlinks, are skipped.
 pub fn extract(tgz: &Path, dest: &Path) -> Result<PathBuf> {
     std::fs::create_dir_all(dest)?;
     let gz = flate2::read::GzDecoder::new(BufReader::new(File::open(tgz)?));
     let mut archive = tar::Archive::new(gz);
     for entry in archive.entries()? {
-        // `unpack_in` refuses entries that would escape `dest` (`..`, absolute paths).
-        entry?.unpack_in(dest)?;
+        let mut entry = entry?;
+        let kind = entry.header().entry_type();
+        if kind.is_symlink() || kind.is_hard_link() {
+            continue;
+        }
+        let Some(rel) = portable_path(&entry.path()?) else {
+            continue;
+        };
+        let target = dest.join(rel);
+        if kind.is_dir() {
+            std::fs::create_dir_all(&target)?;
+        } else if kind.is_file() {
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            entry.unpack(&target)?;
+        }
     }
     find_docset_dir(dest)
+}
+
+/// A relative path with every component valid on all platforms (characters
+/// Windows forbids become `_`), or `None` if it isn't a plain relative path.
+pub fn portable_path(path: &Path) -> Option<PathBuf> {
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            Component::Normal(part) => {
+                let part = dir_name(&part.to_string_lossy());
+                let part = part.trim_end_matches(['.', ' ']);
+                if part.is_empty() {
+                    return None;
+                }
+                out.push(part);
+            }
+            Component::CurDir => {}
+            _ => return None,
+        }
+    }
+    (!out.as_os_str().is_empty()).then_some(out)
 }
 
 /// The single `*.docset` directory inside `dir`.
@@ -140,7 +186,8 @@ pub fn resolve(root: &Path, path: &str) -> Option<PathBuf> {
         if !rel.components().all(|c| matches!(c, Component::Normal(_))) {
             return None;
         }
-        let full = root.join(rel);
+        // Same mapping as `extract`.
+        let full = root.join(portable_path(rel)?);
         full.is_file().then_some(full)
     })
 }
@@ -189,6 +236,58 @@ mod tests {
         let doc: ZealDoc =
             serde_json::from_str(r#"{"name":"Y","title":"Y","versions":null}"#).unwrap();
         assert!(doc.versions.is_empty());
+    }
+
+    #[test]
+    fn archive_paths_become_portable() {
+        let p = |s: &str| portable_path(Path::new(s));
+        assert_eq!(
+            p("Docs/127.0.0.1:3000/index.html"),
+            Some(PathBuf::from("Docs/127.0.0.1_3000/index.html"))
+        );
+        assert_eq!(p("./a/b"), Some(PathBuf::from("a/b")));
+        assert_eq!(p("../escape"), None);
+        assert_eq!(p("/abs"), None);
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("127.0.0.1_3000")).unwrap();
+        std::fs::write(dir.path().join("127.0.0.1_3000/p.html"), "x").unwrap();
+        assert!(resolve(dir.path(), "127.0.0.1:3000/p.html").is_some());
+    }
+
+    #[test]
+    fn extract_skips_links_and_escapes() {
+        let dir = tempfile::tempdir().unwrap();
+        let tgz = dir.path().join("t.tgz");
+        {
+            let gz = flate2::write::GzEncoder::new(
+                File::create(&tgz).unwrap(),
+                flate2::Compression::fast(),
+            );
+            let mut b = tar::Builder::new(gz);
+            let mut add = |path: &str, kind: tar::EntryType, data: &[u8]| {
+                let mut h = tar::Header::new_gnu();
+                h.set_entry_type(kind);
+                h.set_size(data.len() as u64);
+                h.set_mode(0o644);
+                if kind.is_symlink() {
+                    h.set_link_name("/etc").unwrap();
+                }
+                // `append_data` would reject `..`; write the raw name to simulate a hostile archive.
+                h.as_gnu_mut().unwrap().name[..path.len()].copy_from_slice(path.as_bytes());
+                h.set_cksum();
+                b.append(&h, data).unwrap();
+            };
+            add("X.docset/Contents/a:b.html", tar::EntryType::Regular, b"ok");
+            add("X.docset/link", tar::EntryType::Symlink, b"");
+            add("../evil.txt", tar::EntryType::Regular, b"no");
+            b.into_inner().unwrap().finish().unwrap();
+        }
+        let out = dir.path().join("out");
+        let docset = extract(&tgz, &out).unwrap();
+        assert!(docset.join("Contents/a_b.html").is_file());
+        assert!(!docset.join("link").exists());
+        assert!(!dir.path().join("evil.txt").exists());
     }
 
     #[test]
