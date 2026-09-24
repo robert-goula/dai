@@ -51,7 +51,7 @@ export function useDaiEvents(onOpen: (page: Page) => void): InstallState {
       }
     });
     function invalidate() {
-      for (const key of ["docsets", "outdated", "search"]) {
+      for (const key of ["docsets", "outdated", "search", "project"]) {
         void queryClient.invalidateQueries({ queryKey: [key] });
       }
     }

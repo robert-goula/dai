@@ -86,3 +86,34 @@
   color: var(--muted);
   text-align: start;
 }
+
+.project {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin: -4px 10px 6px;
+  color: var(--muted);
+  font-size: 12px;
+
+  & button {
+    padding: 0 6px;
+    border: none;
+    background: none;
+    color: var(--muted);
+  }
+}
+
+.projectName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+
+  & strong {
+    color: var(--fg);
+    font-weight: 600;
+  }
+}
+
+.projectPick {
+  text-decoration: underline dotted;
+}

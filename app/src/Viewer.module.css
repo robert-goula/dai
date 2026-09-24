@@ -36,7 +36,8 @@
 }
 
 .frame {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   height: 100%;
   border: none;
   background: var(--bg);
@@ -52,4 +53,63 @@
 
 .keys {
   font-size: 12px;
+}
+
+.body {
+  display: flex;
+  min-height: 0;
+}
+
+.tocToggle {
+  margin-inline-start: auto;
+  flex: none;
+
+  &[aria-pressed="true"] {
+    background: var(--accent-bg);
+  }
+}
+
+.toc {
+  flex: none;
+  width: 240px;
+  overflow-y: auto;
+  border-inline-start: 1px solid var(--border);
+  background: var(--bg-subtle);
+  font-size: 13px;
+
+  & ol {
+    list-style: none;
+    margin: 0;
+    padding: 8px 0;
+  }
+
+  & li[data-level="2"] {
+    padding-inline-start: 12px;
+  }
+
+  & li[data-level="3"] {
+    padding-inline-start: 24px;
+  }
+
+  & button {
+    display: block;
+    width: 100%;
+    border: none;
+    border-radius: 0;
+    background: none;
+    padding: 3px 12px;
+    text-align: start;
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+
+    &:hover {
+      color: var(--fg);
+    }
+  }
+
+  @media (width < 900px) {
+    display: none;
+  }
 }

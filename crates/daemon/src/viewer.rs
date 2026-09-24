@@ -35,8 +35,8 @@ img { max-width: 100%; }
 dt { font-weight: 600; margin-top: 1em; }
 "#;
 
-/// Reports the current page to the parent window and routes external links
-/// out to the system browser (the parent handles both messages).
+/// Reports the current page and its headings to the parent window, routes
+/// external links out to the system browser, and scrolls to headings on request.
 const SCRIPT: &str = r#"
 parent.postMessage({ type: "dai:page", docset: DAI_DOCSET, path: DAI_PATH, title: document.title }, "*");
 document.addEventListener("click", (e) => {
@@ -44,6 +44,23 @@ document.addEventListener("click", (e) => {
   if (!a || a.origin === location.origin) return;
   e.preventDefault();
   parent.postMessage({ type: "dai:external", url: a.href }, "*");
+});
+// Table of contents: headings in the main content (site captures carry nav
+// headings too), given ids where missing so the app can scroll to them.
+{
+  const root = document.querySelector("article, main, [role=main]") || document.body;
+  const heads = [...root.querySelectorAll("h1, h2, h3")].filter((h) => h.textContent.trim());
+  heads.forEach((h, i) => { if (!h.id) h.id = "dai-h-" + i; });
+  const items = heads.map((h) => ({
+    level: Number(h.tagName[1]),
+    id: h.id,
+    text: h.textContent.replace(/\s+/g, " ").replace(/[¶#§]\s*$/, "").trim(),
+  }));
+  parent.postMessage({ type: "dai:toc", items }, "*");
+}
+addEventListener("message", (e) => {
+  if (e.source !== parent || e.data?.type !== "dai:scroll") return;
+  document.getElementById(e.data.id)?.scrollIntoView({ block: "start" });
 });
 "#;
 

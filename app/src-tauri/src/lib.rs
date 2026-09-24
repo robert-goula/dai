@@ -2,10 +2,12 @@
 //! API token never reaches the webview); the UI calls these commands and
 //! listens for `dai-event`.
 
+use std::path::PathBuf;
 use std::time::Duration;
 
 use dai_core::CatalogEntry;
 use dai_core::index::Hit;
+use dai_core::project::ProjectReport;
 use dai_core::snippets::{Snippet, SnippetInput};
 use dai_core::store::Docset;
 use dai_core::{generate, paths};
@@ -72,14 +74,20 @@ async fn search(
     daemon: State<'_, Daemon>,
     query: String,
     docsets: Vec<String>,
+    project: Option<PathBuf>,
     limit: usize,
 ) -> CmdResult<Vec<Hit>> {
     daemon
         .client()
         .await?
-        .search(&query, &docsets, None, limit)
+        .search(&query, &docsets, project.as_deref(), limit)
         .await
         .map_err(err)
+}
+
+#[tauri::command]
+async fn project(daemon: State<'_, Daemon>, path: PathBuf) -> CmdResult<ProjectReport> {
+    daemon.client().await?.project(&path).await.map_err(err)
 }
 
 #[tauri::command]
@@ -253,6 +261,14 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        // "Start at login" runs only the background service (`<app> serve`),
+        // not a window, so agents can reach DAI right after login.
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .args(["serve"])
+                .build(),
+        )
         .manage(Daemon::default())
         .setup(|app| {
             #[cfg(any(windows, target_os = "linux"))]
@@ -283,6 +299,7 @@ pub fn run() {
             remove,
             search,
             initial_open,
+            project,
             snippets,
             snippet,
             create_snippet,

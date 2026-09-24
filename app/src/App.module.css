@@ -50,3 +50,18 @@
     display: none;
   }
 }
+
+.footer {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-block-start: auto;
+  padding: 8px 12px;
+  border-block-start: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.footerError {
+  color: var(--danger);
+}

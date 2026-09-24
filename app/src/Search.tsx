@@ -1,6 +1,8 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { type RefObject, useEffect, useRef, useState } from "react";
 import { api, type Hit, type Page } from "./api";
+import { folderName, projectStatus } from "./project";
 import styles from "./Search.module.css";
 
 type Props = {
@@ -14,13 +16,19 @@ export function Search({ inputRef, onOpen, onAskContext7 }: Props) {
   const [query, setQuery] = useState("");
   const [docset, setDocset] = useState("");
   const [active, setActive] = useState(0);
+  const [project, setProject] = useState<string | null>(loadProject);
   const list = useRef<HTMLOListElement>(null);
 
   const docsets = useQuery({ queryKey: ["docsets"], queryFn: api.docsets });
   const q = query.trim();
+  const report = useQuery({
+    queryKey: ["project", project],
+    queryFn: () => api.project(project!),
+    enabled: project !== null,
+  });
   const results = useQuery({
-    queryKey: ["search", q, docset],
-    queryFn: () => api.search(q, docset ? [docset] : []),
+    queryKey: ["search", q, docset, project],
+    queryFn: () => api.search(q, docset ? [docset] : [], project ?? undefined),
     enabled: q.length > 0,
     placeholderData: keepPreviousData,
   });
@@ -46,6 +54,16 @@ export function Search({ inputRef, onOpen, onAskContext7 }: Props) {
   };
 
   const none = docsets.data?.length === 0;
+  const status = report.data ? projectStatus(report.data) : null;
+
+  const chooseProject = async () => {
+    const dir = await openDialog({ directory: true, title: "Choose a project folder" });
+    if (typeof dir === "string") updateProject(dir);
+  };
+  const updateProject = (dir: string | null) => {
+    setProject(dir);
+    saveProject(dir);
+  };
 
   return (
     <div className={styles.search}>
@@ -68,6 +86,25 @@ export function Search({ inputRef, onOpen, onAskContext7 }: Props) {
             </option>
           ))}
         </select>
+      </div>
+
+      <div className={styles.project}>
+        {project ? (
+          <>
+            <span className={styles.projectName} title={status?.details.join("\n")}>
+              Versions from <strong>{folderName(project)}</strong>
+              {status && ` · ${status.summary}`}
+              {report.error && " · no manifest found"}
+            </span>
+            <button onClick={() => updateProject(null)} aria-label="Stop using project versions">
+              ✕
+            </button>
+          </>
+        ) : (
+          <button className={styles.projectPick} onClick={() => void chooseProject()}>
+            Match a project's versions…
+          </button>
+        )}
       </div>
 
       {none && (
@@ -102,4 +139,25 @@ export function Search({ inputRef, onOpen, onAskContext7 }: Props) {
       </ol>
     </div>
   );
+}
+
+// The chosen project is a per-machine convenience, so browser storage is
+// fine; it may be unavailable, hence the try/catch.
+const PROJECT_KEY = "dai.project";
+
+function loadProject(): string | null {
+  try {
+    return localStorage.getItem(PROJECT_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function saveProject(dir: string | null) {
+  try {
+    if (dir) localStorage.setItem(PROJECT_KEY, dir);
+    else localStorage.removeItem(PROJECT_KEY);
+  } catch {
+    // Not persisted; still used for this session.
+  }
 }

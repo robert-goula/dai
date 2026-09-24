@@ -43,6 +43,25 @@ export type GenerateSource =
   | { kind: "dir"; path: string }
   | { kind: "context7"; library_id: string; topics: string[] };
 
+/** Mirrors `dai_core::project::ProjectReport`. */
+export type ProjectReport = {
+  root: string;
+  covered: {
+    dependency: Dependency;
+    /** Version matches first; `matches` is null when unknown. */
+    installed: { id: string; version: string; matches: boolean | null }[];
+  }[];
+  uncovered: Dependency[];
+  suggestions: { dependency: string; id: string; version: string }[];
+};
+
+export type Dependency = {
+  ecosystem: string;
+  name: string;
+  spec: string;
+  resolved: string | null;
+};
+
 export type Context7Library = {
   id: string;
   title: string;
@@ -94,8 +113,9 @@ export const api = {
   outdated: (refresh = false) => invoke<Docset[]>("outdated", { refresh }),
   install: (id: string) => invoke<Docset>("install", { id }),
   remove: (id: string) => invoke<boolean>("remove", { id }),
-  search: (query: string, docsets: string[], limit = 50) =>
-    invoke<Hit[]>("search", { query, docsets, limit }),
+  search: (query: string, docsets: string[], project?: string, limit = 50) =>
+    invoke<Hit[]>("search", { query, docsets, project: project ?? null, limit }),
+  project: (path: string) => invoke<ProjectReport>("project", { path }),
   initialOpen: () => invoke<Page | null>("initial_open"),
   generate: (source: GenerateSource, name?: string) =>
     invoke<Docset>("generate", { name: name || null, source }),

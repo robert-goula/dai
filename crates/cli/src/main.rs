@@ -5,6 +5,32 @@ use clap::{Parser, Subcommand};
 use dai_core::{generate, paths};
 use dai_daemon::client::Client;
 
+/// `print!`/`println!` that exit quietly when stdout is closed (e.g. piped
+/// into `head`) instead of panicking.
+macro_rules! out {
+    ($($arg:tt)*) => { write_stdout(format_args!($($arg)*), false) };
+}
+macro_rules! outln {
+    ($($arg:tt)*) => { write_stdout(format_args!($($arg)*), true) };
+}
+
+fn write_stdout(args: std::fmt::Arguments, newline: bool) {
+    use std::io::Write;
+    let mut stdout = std::io::stdout().lock();
+    let res = stdout.write_fmt(args).and_then(|()| {
+        if newline {
+            stdout.write_all(b"\n")
+        } else {
+            Ok(())
+        }
+    });
+    match res {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => std::process::exit(0),
+        Err(e) => panic!("writing to stdout: {e}"),
+    }
+}
+
 /// DAI (Docs AI): local documentation for you and your agents.
 #[derive(Parser)]
 #[command(version)]
@@ -144,8 +170,8 @@ async fn main() -> Result<()> {
         Command::Mcp => return dai_daemon::mcp::serve_stdio(&home).await,
         Command::Stop => {
             match Client::new(&home)?.shutdown().await {
-                Ok(()) => println!("daemon stopped"),
-                Err(_) => println!("daemon is not running"),
+                Ok(()) => outln!("daemon stopped"),
+                Err(_) => outln!("daemon is not running"),
             }
             return Ok(());
         }
@@ -163,9 +189,12 @@ async fn main() -> Result<()> {
                     continue;
                 }
                 let mark = if installed.contains(&d.id) { "*" } else { " " };
-                println!(
+                outln!(
                     "{mark} {:<36} {:<36} {:<12} {}",
-                    d.id, d.name, d.version, d.source
+                    d.id,
+                    d.name,
+                    d.version,
+                    d.source
                 );
             }
         }
@@ -181,7 +210,7 @@ async fn main() -> Result<()> {
                 slugs
             };
             if slugs.is_empty() {
-                println!("everything is up to date");
+                outln!("everything is up to date");
             }
             for slug in slugs {
                 install(&c, &slug).await?;
@@ -190,7 +219,7 @@ async fn main() -> Result<()> {
         (Command::Remove { ids }, c) => {
             for id in ids {
                 let removed = c.remove(&id).await?;
-                println!(
+                outln!(
                     "{id}: {}",
                     if removed { "removed" } else { "not installed" }
                 );
@@ -198,7 +227,7 @@ async fn main() -> Result<()> {
         }
         (Command::List, c) => {
             for d in c.docsets().await? {
-                println!("{:<32} {:<28} {:<10} {}", d.id, d.name, d.version, d.source);
+                outln!("{:<32} {:<28} {:<10} {}", d.id, d.name, d.version, d.source);
             }
         }
         (
@@ -217,7 +246,7 @@ async fn main() -> Result<()> {
                 .search(&query.join(" "), &docsets, project.as_deref(), limit)
                 .await?;
             if json {
-                println!("{}", serde_json::to_string_pretty(&hits)?);
+                outln!("{}", serde_json::to_string_pretty(&hits)?);
                 return Ok(());
             }
             for h in &hits {
@@ -226,12 +255,16 @@ async fn main() -> Result<()> {
                 } else {
                     h.heading.clone()
                 };
-                println!(
+                outln!(
                     "{:>6.2}  {}  {}  {}  ({})",
-                    h.score, h.docset, h.name, what, h.path
+                    h.score,
+                    h.docset,
+                    h.name,
+                    what,
+                    h.path
                 );
                 if !h.snippet.is_empty() {
-                    println!("        {}", h.snippet.replace('\n', " "));
+                    outln!("        {}", h.snippet.replace('\n', " "));
                 }
             }
             eprintln!("{} hits in {:.1?}", hits.len(), started.elapsed());
@@ -246,7 +279,7 @@ async fn main() -> Result<()> {
             c,
         ) => match c.get_doc(&docset, &path, offset, max_chars).await? {
             Some(page) => {
-                println!("{}", page.markdown);
+                outln!("{}", page.markdown);
                 if let Some(next) = page.next_offset {
                     eprintln!(
                         "-- {next}/{} chars, continue with --offset {next}",
@@ -273,12 +306,12 @@ async fn main() -> Result<()> {
                 } else {
                     format!("#{}", s.tags.join(" #"))
                 };
-                println!("{:<36} {:<12} {:<40} {tags}", s.id, s.language, s.title);
+                outln!("{:<36} {:<12} {:<40} {tags}", s.id, s.language, s.title);
             }
         }
         (Command::Snippet(SnippetCommand::Show { id, code }), c) => match c.snippet(&id).await? {
-            Some(s) if code => println!("{}", s.code),
-            Some(s) => print!("{}", dai_core::snippets::render(&s)),
+            Some(s) if code => outln!("{}", s.code),
+            Some(s) => out!("{}", dai_core::snippets::render(&s)),
             None => anyhow::bail!("no snippet `{id}`"),
         },
         (Command::Generate { source, name }, c) => {
@@ -296,7 +329,7 @@ async fn main() -> Result<()> {
             let started = Instant::now();
             eprintln!("generating from {}...", source.origin());
             let ds = c.generate(name.as_deref(), &source).await?;
-            println!(
+            outln!(
                 "{} {} generated in {:.1?}",
                 ds.id,
                 ds.version,
@@ -305,15 +338,18 @@ async fn main() -> Result<()> {
         }
         (Command::Context7 { name, query }, c) => {
             for lib in c.context7_libraries(&name, &query.join(" ")).await? {
-                println!(
+                outln!(
                     "{:<40} {:<24} {:>8} tokens  {}",
-                    lib.id, lib.title, lib.total_tokens, lib.description
+                    lib.id,
+                    lib.title,
+                    lib.total_tokens,
+                    lib.description
                 );
             }
         }
         (Command::Project { path }, c) => {
             let path = std::path::absolute(path.unwrap_or_else(|| ".".into()))?;
-            print!(
+            out!(
                 "{}",
                 dai_daemon::mcp::project_summary(&c.project(&path).await?)
             );
@@ -327,7 +363,7 @@ async fn install(c: &Client, slug: &str) -> Result<()> {
     let started = Instant::now();
     eprintln!("installing {slug}...");
     let ds = c.install(slug).await?;
-    println!(
+    outln!(
         "{} {} installed in {:.1?}",
         ds.id,
         ds.version,

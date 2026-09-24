@@ -44,7 +44,7 @@ app ──────▶ │ event stream /api/events (SSE) ← open_in_app, up
 
 - **One binary, `dai`**, with subcommands: `serve` (the daemon), `mcp` (stdio shim), `install/update/remove/list/search` (CLI). One artifact to ship per platform.
 - **The daemon is the only index writer.** The app and the CLI are thin clients over `127.0.0.1:<port>`. The port and a random auth token go in `<data dir>/daemon.json`, and every HTTP/MCP call must present the token. That stops other local web pages from hitting the API.
-- **Lifecycle:** the app and `dai mcp` both start the daemon if it isn't running (a second daemon fails to bind the port, so duplicates cannot run). The app has an opt-in "start at login" toggle using Tauri's autostart plugin (deferred past Phase 2). No launchd/systemd/Windows service in v1.
+- **Lifecycle:** the app and `dai mcp` both start the daemon if it isn't running (a second daemon fails to bind the port, so duplicates cannot run). The app has an opt-in "start at login" toggle using Tauri's autostart plugin. It registers `<app> serve`, so only the background service starts at login, not the window. No launchd/systemd/Windows service in v1.
 - **Storage:** platform dirs from the `directories` crate. `meta.db` (SQLite via rusqlite) holds docset, entry, and version metadata. Dash's `docSet.dsidx` is already SQLite, so it maps over naturally. Raw content lives on disk and the tantivy index sits beside it.
 
 ### Crates (workspace)
@@ -80,7 +80,7 @@ app ──────▶ │ event stream /api/events (SSE) ← open_in_app, up
 
 ### Desktop app (Tauri + React)
 
-- Search-first UI: a type-ahead box, a results list filtered by docset, a doc viewer, and a table of contents (TOC deferred past Phase 2).
+- Search-first UI: a type-ahead box, a results list filtered by docset, a doc viewer, and a table of contents (headings reported by the iframe's shell script; ids are added where pages lack them). Search can take a project folder (a folder picker) to use its dependency versions.
 - Doc viewer: an iframe of the daemon's `/content/<docset>/<path>`, sandboxed and allow-listed in the CSP. DevDocs HTML is wrapped in our stylesheet, Dash pages are served from disk, and generated markdown pages are rendered by the daemon (comrak, GitHub-style heading ids) and sanitized (ammonia). This replaces the planned React markdown renderer, so there's one viewer path for `open_in_app` and anchors.
 - Docset manager: browse the catalog (DevDocs + Dash, filterable by source), install, remove, update, and "update all". It shows stale/outdated state and progress over SSE.
 - Snippets: list, search, filter by language, edit, tag, copy code, delete.

@@ -7,6 +7,7 @@ import { Docsets } from "./Docsets";
 import { Search } from "./Search";
 import { SnippetEditor } from "./SnippetEditor";
 import { Snippets } from "./Snippets";
+import { StartAtLogin } from "./StartAtLogin";
 import { useDaiEvents } from "./useDaiEvents";
 import { Viewer } from "./Viewer";
 
@@ -80,6 +81,7 @@ export function App() {
           <Snippets selected={main.kind === "snippet" ? main.id : null} onSelect={editSnippet} />
         )}
         {tab === "docsets" && <Docsets installState={installState} />}
+        <StartAtLogin />
       </aside>
       <main className={styles.main}>
         {base.error ? (
