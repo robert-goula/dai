@@ -34,6 +34,22 @@ export type Hit = {
 
 export type Page = { docset: string; path: string };
 
+/** How a markdown (`md:`) docset is generated; mirrors `generate::Source`. */
+export type GenerateSource =
+  | { kind: "llms"; url: string }
+  | { kind: "repo"; url: string; git_ref?: string }
+  | { kind: "dir"; path: string }
+  | { kind: "context7"; library_id: string; topics: string[] };
+
+export type Context7Library = {
+  id: string;
+  title: string;
+  description: string;
+  totalTokens: number;
+  totalSnippets: number;
+  versions: string[];
+};
+
 export type Snippet = {
   /** File stem in the snippets folder. */
   id: string;
@@ -79,6 +95,12 @@ export const api = {
   search: (query: string, docsets: string[], limit = 50) =>
     invoke<Hit[]>("search", { query, docsets, limit }),
   initialOpen: () => invoke<Page | null>("initial_open"),
+  generate: (source: GenerateSource, name?: string) =>
+    invoke<Docset>("generate", { name: name || null, source }),
+  context7Libraries: (name: string, query: string) =>
+    invoke<Context7Library[]>("context7_libraries", { name, query }),
+  context7Docs: (libraryId: string, query: string) =>
+    invoke<string>("context7_docs", { libraryId, query }),
   snippets: (query: string, language?: string, tag?: string) =>
     invoke<Snippet[]>("snippets", { query, language, tag }),
   snippet: (id: string) => invoke<Snippet | null>("snippet", { id }),

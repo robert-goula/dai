@@ -14,8 +14,10 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use dai_core::snippets::{Snippet, SnippetInput};
+use dai_core::snippets::{Snippet, SnippetInput, slugify};
+use dai_core::store::Docset;
 use dai_core::{Library, Progress};
+use dai_core::{generate, markdown};
 use notify_debouncer_mini::notify::{RecommendedWatcher, RecursiveMode};
 use notify_debouncer_mini::{DebounceEventResult, Debouncer, new_debouncer};
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
@@ -70,6 +72,9 @@ pub async fn serve(home: &Path, port: u16) -> Result<()> {
         .route("/api/outdated", get(outdated))
         .route("/api/search", get(search))
         .route("/api/doc", get(get_doc))
+        .route("/api/generate", post(generate_docset))
+        .route("/api/context7/libraries", get(context7_libraries))
+        .route("/api/context7/docs", get(context7_docs))
         .route("/api/snippets", get(list_snippets).post(create_snippet))
         .route(
             "/api/snippets/{id}",
@@ -177,18 +182,83 @@ async fn outdated(
 async fn install(
     State(s): State<AppState>,
     UrlPath(id): UrlPath<String>,
-) -> ApiResult<Json<impl Serialize>> {
-    s.local.emit(DaiEvent::InstallStarted { id: id.clone() });
-    let res = blocking(&s.local.lib, {
-        let (id, local) = (id.clone(), s.local.clone());
-        move |l| l.install(&id, &progress_reporter(&id, &local))
+) -> ApiResult<Json<Docset>> {
+    let job_id = id.clone();
+    Ok(Json(
+        with_install_events(s.local, job_id, move |l, progress| l.install(&id, progress)).await?,
+    ))
+}
+
+#[derive(Deserialize)]
+struct GenerateRequest {
+    name: Option<String>,
+    source: generate::Source,
+}
+
+/// Builds a markdown docset (llms.txt, git repo, folder, or Context7).
+async fn generate_docset(
+    State(s): State<AppState>,
+    Json(req): Json<GenerateRequest>,
+) -> ApiResult<Json<Docset>> {
+    let name = req.name.clone().filter(|n| !n.trim().is_empty());
+    let slug = slugify(&name.clone().unwrap_or_else(|| req.source.default_name()));
+    let id = format!("{}{slug}", generate::ID_PREFIX);
+    Ok(Json(
+        with_install_events(s.local, id, move |l, progress| {
+            l.generate(name.as_deref(), req.source, progress)
+        })
+        .await?,
+    ))
+}
+
+/// Runs an install-like job on the blocking pool, bracketed by
+/// `install_started`/`install_finished` events with progress in between.
+async fn with_install_events<F>(local: Arc<Local>, id: String, job: F) -> Result<Docset>
+where
+    F: FnOnce(&Library, &(dyn Fn(Progress) + Sync)) -> Result<Docset> + Send + 'static,
+{
+    local.emit(DaiEvent::InstallStarted { id: id.clone() });
+    let res = blocking(&local.lib, {
+        let (id, local) = (id.clone(), local.clone());
+        move |l| job(l, &progress_reporter(&id, &local))
     })
     .await;
-    s.local.emit(DaiEvent::InstallFinished {
+    local.emit(DaiEvent::InstallFinished {
         id,
         error: res.as_ref().err().map(|e| format!("{e:#}")),
     });
-    Ok(Json(res?))
+    res
+}
+
+#[derive(Deserialize)]
+struct Context7SearchParams {
+    name: String,
+    #[serde(default)]
+    query: String,
+}
+
+async fn context7_libraries(
+    Query(p): Query<Context7SearchParams>,
+) -> ApiResult<Json<Vec<generate::Context7Library>>> {
+    let libs = tokio::task::spawn_blocking(move || generate::context7_search(&p.name, &p.query))
+        .await
+        .map_err(anyhow::Error::from)??;
+    Ok(Json(libs))
+}
+
+#[derive(Deserialize)]
+struct Context7DocsParams {
+    library_id: String,
+    query: String,
+}
+
+/// Context7 results as markdown (for the app's "not found locally" panel).
+async fn context7_docs(Query(p): Query<Context7DocsParams>) -> ApiResult<String> {
+    Ok(
+        tokio::task::spawn_blocking(move || generate::context7_docs(&p.library_id, &p.query))
+            .await
+            .map_err(anyhow::Error::from)??,
+    )
 }
 
 /// Turns library progress into `install_progress` events, throttled to whole
@@ -294,6 +364,18 @@ async fn content(
     .await?;
     if let Some(file) = file {
         let bytes = tokio::fs::read(&file).await.map_err(anyhow::Error::from)?;
+        let ext = file.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if docset.starts_with(generate::ID_PREFIX) && matches!(ext, "md" | "mdx") {
+            let text = String::from_utf8_lossy(&bytes);
+            let text = if ext == "mdx" {
+                markdown::clean_mdx(&text)
+            } else {
+                text.into_owned()
+            };
+            return Ok(
+                Html(viewer::wrap(&docset, &path, &markdown::to_html(&text))).into_response(),
+            );
+        }
         let mime = mime_guess::from_path(&file).first_or_octet_stream();
         if mime.subtype() == mime_guess::mime::HTML {
             let html = String::from_utf8_lossy(&bytes);

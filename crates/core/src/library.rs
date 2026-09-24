@@ -12,10 +12,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::dash::{self, ZealDoc};
 use crate::devdocs::{self, CatalogDoc, DocDb, DocIndex};
+use crate::generate;
 use crate::index::SNIPPETS_DOCSET;
 use crate::index::{Hit, Index, IndexDoc};
+use crate::markdown;
 use crate::normalize::{chunk_markdown, html_to_markdown, main_content};
-use crate::snippets::{Snippet, SnippetInput, SnippetStore};
+use crate::snippets::{Snippet, SnippetInput, SnippetStore, slugify};
 use crate::store::{self, Docset, Entry, Page, Store};
 
 const CATALOG_MAX_AGE_SECS: u64 = 24 * 60 * 60;
@@ -164,18 +166,119 @@ impl Library {
                     .get(&ds.id)
                     .is_some_and(|c| match ds.source.as_str() {
                         "dash" => !c.version.is_empty() && c.version != ds.version,
-                        _ => c.mtime > ds.mtime,
+                        "devdocs" => c.mtime > ds.mtime,
+                        // Generated docsets are only updated on request.
+                        _ => false,
                     })
             })
             .collect())
     }
 
     /// Downloads and indexes a docset by id (also used to update one).
+    /// For generated (`md:`) docsets this re-runs the generator.
     pub fn install(&self, id: &str, progress: &(dyn Fn(Progress) + Sync)) -> Result<Docset> {
-        match id.strip_prefix(dash::ID_PREFIX) {
-            Some(name) => self.install_dash(name, progress),
-            None => self.install_devdocs(id, progress),
+        if let Some(name) = id.strip_prefix(dash::ID_PREFIX) {
+            return self.install_dash(name, progress);
         }
+        if let Some(slug) = id.strip_prefix(generate::ID_PREFIX) {
+            let manifest = generate::read_manifest(&self.md_root().join(slug))
+                .with_context(|| format!("`{id}` is not installed; generate it first"))?;
+            return self.generate(Some(&manifest.name), manifest.source, progress);
+        }
+        self.install_devdocs(id, progress)
+    }
+
+    /// Builds a markdown docset from `source` and indexes it as `md:<slug>`
+    /// (slug from `name`, else derived from the source). Replaces an existing
+    /// docset with the same id.
+    pub fn generate(
+        &self,
+        name: Option<&str>,
+        source: generate::Source,
+        progress: &(dyn Fn(Progress) + Sync),
+    ) -> Result<Docset> {
+        let name = name
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+            .map_or_else(|| source.default_name(), String::from);
+        let slug = slugify(&name);
+        progress(Progress::Download {
+            bytes: 0,
+            total: None,
+        });
+        let generated = generate::fetch(&source, &|done, total| {
+            progress(Progress::Download { bytes: done, total });
+        })?;
+        progress(Progress::Index);
+
+        let manifest = generate::Manifest {
+            name: name.clone(),
+            version: generated.version.clone(),
+            generated_at: store::now(),
+            source,
+        };
+        let root = self.md_root();
+        std::fs::create_dir_all(&root)?;
+        let staging = root.join(format!("{slug}.new"));
+        let _ = std::fs::remove_dir_all(&staging);
+        let written = generate::write(&staging, &manifest, &generated);
+        drop(generated);
+        let res = written.and_then(|()| self.ingest_markdown(&staging, &root.join(&slug)));
+        let _ = std::fs::remove_dir_all(&staging);
+        res
+    }
+
+    /// Indexes a markdown docset folder in `staging`, then moves it to `dest`
+    /// (replacing any previous copy) and commits.
+    pub fn ingest_markdown(&self, staging: &Path, dest: &Path) -> Result<Docset> {
+        let manifest = generate::read_manifest(staging)?;
+        let slug = dest
+            .file_name()
+            .and_then(|n| n.to_str())
+            .context("bad docset folder")?;
+        let ds = Docset {
+            id: format!("{}{slug}", generate::ID_PREFIX),
+            name: manifest.name.clone(),
+            source: manifest.source.kind().into(),
+            version: manifest.version.clone(),
+            release: manifest.source.origin().to_string(),
+            mtime: manifest.generated_at,
+            installed_at: store::now(),
+        };
+        let files = generate::read_pages(staging)?;
+        let (pages, entries): (Vec<Page>, Vec<Vec<Entry>>) = files
+            .into_par_iter()
+            .map(|(path, text)| {
+                let markdown = if path.ends_with(".mdx") {
+                    markdown::clean_mdx(&text)
+                } else {
+                    text
+                };
+                let stem = path.rsplit('/').next().unwrap_or(&path);
+                let stem = stem.rsplit_once('.').map_or(stem, |(s, _)| s);
+                let entries = markdown::entries(&path, &markdown, stem);
+                (
+                    Page {
+                        path,
+                        html: String::new(),
+                        markdown,
+                    },
+                    entries,
+                )
+            })
+            .unzip();
+        if pages.is_empty() {
+            bail!("no markdown pages were generated");
+        }
+        let entries: Vec<Entry> = entries.into_iter().flatten().collect();
+
+        let _w = self.write_lock();
+        if dest.exists() {
+            std::fs::remove_dir_all(dest)?;
+        }
+        std::fs::rename(staging, dest)?;
+        self.commit(&ds, &entries, &pages)?;
+        Ok(ds)
     }
 
     fn install_devdocs(&self, slug: &str, progress: &(dyn Fn(Progress) + Sync)) -> Result<Docset> {
@@ -335,11 +438,14 @@ impl Library {
         let _w = self.write_lock();
         self.index.remove_docset(id)?;
         let removed = self.store.remove_docset(id)?;
-        if let Some(name) = id.strip_prefix(dash::ID_PREFIX) {
-            let dir = self.dash_root().join(dash::dir_name(name));
-            if dir.exists() {
-                std::fs::remove_dir_all(dir)?;
-            }
+        let dir = if let Some(name) = id.strip_prefix(dash::ID_PREFIX) {
+            Some(self.dash_root().join(dash::dir_name(name)))
+        } else {
+            id.strip_prefix(generate::ID_PREFIX)
+                .map(|slug| self.md_root().join(slugify(slug)))
+        };
+        if let Some(dir) = dir.filter(|d| d.exists()) {
+            std::fs::remove_dir_all(dir)?;
         }
         Ok(removed)
     }
@@ -352,6 +458,10 @@ impl Library {
         self.home.join("docsets").join("dash")
     }
 
+    fn md_root(&self) -> PathBuf {
+        self.home.join("docsets").join("md")
+    }
+
     pub fn search(&self, query: &str, docsets: &[String], limit: usize) -> Result<Vec<Hit>> {
         self.index.search(query, docsets, limit)
     }
@@ -361,9 +471,13 @@ impl Library {
         Ok(self.store.page(docset, page_path(path))?.map(|p| p.html))
     }
 
-    /// A file (page or asset) of an installed Dash docset, for the app's viewer.
-    /// `None` for other sources or files that don't exist.
+    /// A file (page or asset) of an installed Dash or generated docset, for
+    /// the app's viewer. `None` for DevDocs or files that don't exist.
     pub fn content_file(&self, docset: &str, path: &str) -> Result<Option<PathBuf>> {
+        if let Some(slug) = docset.strip_prefix(generate::ID_PREFIX) {
+            let pages = self.md_root().join(slugify(slug)).join("pages");
+            return Ok(dash::resolve(&pages, page_path(path)));
+        }
         let Some(name) = docset.strip_prefix(dash::ID_PREFIX) else {
             return Ok(None);
         };
@@ -394,7 +508,8 @@ impl Library {
             offset,
             max_chars.unwrap_or(DEFAULT_MAX_CHARS),
         );
-        let url = if docset.starts_with(dash::ID_PREFIX) {
+        let url = if docset.starts_with(dash::ID_PREFIX) || docset.starts_with(generate::ID_PREFIX)
+        {
             String::new()
         } else {
             devdocs::page_url(docset, path)
@@ -762,5 +877,72 @@ mod tests {
 
         assert!(lib.delete_snippet("retry-with-backoff").unwrap());
         assert!(lib.snippets("backoff", None, None, 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn generated_docsets_from_a_folder() {
+        let (dir, lib) = fixture();
+        let src = dir.path().join("my-docs");
+        std::fs::create_dir_all(src.join("guide")).unwrap();
+        std::fs::write(
+            src.join("guide/routing.md"),
+            "# Routing\n\n## Nested layouts\n\nLayouts wrap child routes.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            src.join("guide/forms.mdx"),
+            "import { Callout } from 'x';\n\n# Forms\n\n<Callout>Validate on blur.</Callout>\n",
+        )
+        .unwrap();
+        let source = generate::Source::Dir {
+            path: src.to_string_lossy().into(),
+        };
+
+        let ds = lib.generate(None, source, &|_| {}).unwrap();
+        assert_eq!((ds.id.as_str(), ds.source.as_str()), ("md:my-docs", "dir"));
+
+        let hits = lib
+            .search("Nested layouts", &["md:my-docs".into()], 5)
+            .unwrap();
+        assert_eq!(hits[0].path, "guide/routing.md#nested-layouts");
+        let forms = lib
+            .get_doc("md:my-docs", "guide/forms.mdx", 0, None)
+            .unwrap()
+            .unwrap();
+        assert!(
+            forms.markdown.contains("Validate on blur.") && !forms.markdown.contains("Callout")
+        );
+        assert!(
+            lib.content_file("md:my-docs", "guide/routing.md#x")
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            lib.content_file("md:my-docs", "../docset.toml")
+                .unwrap()
+                .is_none()
+        );
+
+        // Updating re-runs the generator from the manifest.
+        std::fs::write(
+            src.join("guide/routing.md"),
+            "# Routing\n\n## Loaders\n\nFetch data first.\n",
+        )
+        .unwrap();
+        lib.install("md:my-docs", &|_| {}).unwrap();
+        assert!(
+            lib.search("Loaders", &["md:my-docs".into()], 5)
+                .unwrap()
+                .iter()
+                .any(|h| h.kind == "entry")
+        );
+        assert!(
+            lib.search("Nested layouts", &["md:my-docs".into()], 5)
+                .unwrap()
+                .is_empty()
+        );
+
+        assert!(lib.remove("md:my-docs").unwrap());
+        assert!(!lib.md_root().join("my-docs").exists());
     }
 }

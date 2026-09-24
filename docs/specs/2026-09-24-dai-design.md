@@ -81,20 +81,21 @@ app ──────▶ │ event stream /api/events (SSE) ← open_in_app, up
 ### Desktop app (Tauri + React)
 
 - Search-first UI: a type-ahead box, a results list filtered by docset, a doc viewer, and a table of contents (TOC deferred past Phase 2).
-- Doc viewer: an iframe of the daemon's `/content/<docset>/<path>` for sources that have HTML, sandboxed and allow-listed in the CSP. A markdown renderer (react-markdown + remark-gfm + our MDX shim) for generated and markdown docsets and snippets.
+- Doc viewer: an iframe of the daemon's `/content/<docset>/<path>`, sandboxed and allow-listed in the CSP. DevDocs HTML is wrapped in our stylesheet, Dash pages are served from disk, and generated markdown pages are rendered by the daemon (comrak, GitHub-style heading ids) and sanitized (ammonia). This replaces the planned React markdown renderer, so there's one viewer path for `open_in_app` and anchors.
 - Docset manager: browse the catalog (DevDocs + Dash, filterable by source), install, remove, update, and "update all". It shows stale/outdated state and progress over SSE.
 - Snippets: list, search, filter by language, edit, tag, copy code, delete.
-- "Not found locally" → a **Context7** panel: query Context7 using the API key from settings, then optionally "Save as docset" (a snapshot saved as a markdown docset).
+- "Not found locally" → a **Context7** panel, opened from Search with the current query: pick a library, read the results (rendered with react-markdown), and optionally "Save as docset" (a Context7 snapshot). The daemon proxies Context7. The API key is optional (`$CONTEXT7_API_KEY` or `context7_api_key` in `~/.config/dai/config.toml`); without one, Context7 is rate-limited.
 - Deep-link handler for `dai://open`, plus a listener for SSE `open` events.
 
 ### Generated docsets (the markdown docset format)
 
-A folder with `docset.toml` (name, version, source, generated_at, origin URL) and `**/*.md`. The same format is used for llms.txt, repo docs, Context7 snapshots, and any hand-written docs. Generators:
+`<data dir>/docsets/md/<slug>/` holds `docset.toml` (name, version, generated_at, and the `source` used to generate it) plus `pages/**.md(x)` and images. Ids are `md:<slug>`. The same format is used for llms.txt, git repos, local folders, and Context7 snapshots. Search entries are each page's title (`Guide`) and its `##`/`###` headings (`Section`, with anchors matching the rendered ids). `.mdx` files go through the MDX cleanup.
 
-1. **llms.txt:** fetch `<site>/llms-full.txt` (fall back to `llms.txt` plus its linked pages) and split on headings.
-2. **Repo:** shallow-clone a git URL at a tag or branch, then collect README + `docs/**/*.md(x)`. The version comes from the tag.
-3. **Context7 snapshot:** run from the app with a list of topics, save the results.
-Re-running a generator counts as an "update". The manager shows `generated_at` so staleness is visible.
+1. **llms.txt:** use `<site>/llms-full.txt` split into pages at `# ` headings. Otherwise use `llms.txt` plus the same-site pages it links to, one level deep, capped at 2,000 pages, fetched 8 at a time, with HTML pages converted.
+2. **Repo:** `git clone --depth 1` (needs `git` on PATH) at an optional branch or tag. Collects the README plus `docs/`, `doc/`, `documentation/`, `website/docs/`, `content/docs/`, or else every markdown file. The version is the ref or the short commit.
+3. **Context7 snapshot:** one page per topic (a default set if none is given), from the app panel or `dai generate context7 <id> -t <topic>`. `dai context7 <name>` finds library ids.
+4. **Local folder:** every markdown file and image under a path (`dai generate dir <path>`).
+Re-running a generator counts as an "update" (`dai update md:<slug>`, or Regenerate in the app). Generated docsets are never flagged as outdated automatically.
 
 ### Snippets
 
@@ -107,7 +108,7 @@ Re-running a generator counts as an "update". The manager shows `generated_at` s
 2. **Desktop app v1.** Search, viewer, docset manager, SSE progress, auto-starting the daemon, `open_in_app` + deep link.
 3. **Dash/Zeal docsets.** Zeal catalog, streamed `.tgz` install with progress events, dsidx import, the same normalize/index pipeline.
 4. **Snippets.** Store, watcher, index, MCP snippet tools (incl. `save_snippet`), CLI, app editor.
-5. **Generation + Context7.** Markdown docset format, the llms.txt and repo generators, the app's Context7 panel and snapshot-to-docset.
+5. **Generation + Context7.** Markdown docset format; the llms.txt, repo, folder, and Context7 generators; `dai generate`; the app's Generate form and Context7 panel with snapshot-to-docset.
 6. **Version awareness.** Manifest parsers, `resolve_project_versions`, `project_path` on `search_docs`, side-by-side installs of multiple versions.
 
 Separate later plans: **Raycast extension** (a thin client over `/api`), **hybrid/semantic search**, **signed installers and auto-update** (Tauri updater, code signing).

@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use dai_core::paths;
+use dai_core::{generate, paths};
 use dai_daemon::client::Client;
 
 /// DAI (Docs AI): local documentation for you and your agents.
@@ -66,6 +66,42 @@ enum Command {
     /// Work with saved code snippets.
     #[command(subcommand)]
     Snippet(SnippetCommand),
+    /// Build a markdown docset for a library without a (current) docset.
+    Generate {
+        #[command(subcommand)]
+        source: GenerateSource,
+        /// Docset name (id becomes `md:<name>`). Derived from the source if omitted.
+        #[arg(long, global = true)]
+        name: Option<String>,
+    },
+    /// Find Context7 library ids (for `dai generate context7`).
+    Context7 {
+        name: String,
+        /// What you're looking for, to rank results.
+        query: Vec<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum GenerateSource {
+    /// From a site's llms-full.txt / llms.txt (site root or the file's URL).
+    Llms { url: String },
+    /// From a git repo's README and docs folders.
+    Repo {
+        url: String,
+        /// Branch or tag (defaults to the repo's default branch).
+        #[arg(long = "ref")]
+        git_ref: Option<String>,
+    },
+    /// From markdown files in a local folder.
+    Dir { path: std::path::PathBuf },
+    /// From Context7 results for a library id (see `dai context7`).
+    Context7 {
+        library_id: String,
+        /// Topics to fetch, one page each (repeatable). Defaults to a general set.
+        #[arg(short, long = "topic")]
+        topics: Vec<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -233,6 +269,36 @@ async fn main() -> Result<()> {
             Some(s) => print!("{}", dai_core::snippets::render(&s)),
             None => anyhow::bail!("no snippet `{id}`"),
         },
+        (Command::Generate { source, name }, c) => {
+            let source = match source {
+                GenerateSource::Llms { url } => generate::Source::Llms { url },
+                GenerateSource::Repo { url, git_ref } => generate::Source::Repo { url, git_ref },
+                GenerateSource::Dir { path } => generate::Source::Dir {
+                    // The daemon resolves paths, so make it absolute here.
+                    path: std::path::absolute(&path)?.to_string_lossy().into_owned(),
+                },
+                GenerateSource::Context7 { library_id, topics } => {
+                    generate::Source::Context7 { library_id, topics }
+                }
+            };
+            let started = Instant::now();
+            eprintln!("generating from {}...", source.origin());
+            let ds = c.generate(name.as_deref(), &source).await?;
+            println!(
+                "{} {} generated in {:.1?}",
+                ds.id,
+                ds.version,
+                started.elapsed()
+            );
+        }
+        (Command::Context7 { name, query }, c) => {
+            for lib in c.context7_libraries(&name, &query.join(" ")).await? {
+                println!(
+                    "{:<40} {:<24} {:>8} tokens  {}",
+                    lib.id, lib.title, lib.total_tokens, lib.description
+                );
+            }
+        }
         (Command::Serve { .. } | Command::Mcp | Command::Stop, _) => unreachable!(),
     }
     Ok(())

@@ -2,8 +2,10 @@
 
 pub mod dash;
 pub mod devdocs;
+pub mod generate;
 pub mod index;
 pub mod library;
+pub mod markdown;
 mod net;
 pub mod normalize;
 pub mod paths;

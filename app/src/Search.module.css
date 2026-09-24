@@ -79,3 +79,10 @@
 .errorText {
   color: var(--danger);
 }
+
+.context7 {
+  margin: 0 10px 8px;
+  border-style: dashed;
+  color: var(--muted);
+  text-align: start;
+}

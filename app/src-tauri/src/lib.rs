@@ -6,9 +6,9 @@ use std::time::Duration;
 
 use dai_core::CatalogEntry;
 use dai_core::index::Hit;
-use dai_core::paths;
 use dai_core::snippets::{Snippet, SnippetInput};
 use dai_core::store::Docset;
+use dai_core::{generate, paths};
 use dai_daemon::DaiEvent;
 use dai_daemon::client::Client;
 use serde::Serialize;
@@ -135,6 +135,36 @@ async fn delete_snippet(daemon: State<'_, Daemon>, id: String) -> CmdResult<bool
         .map_err(err)
 }
 
+#[tauri::command]
+async fn generate(
+    daemon: State<'_, Daemon>,
+    name: Option<String>,
+    source: generate::Source,
+) -> CmdResult<Docset> {
+    let client = daemon.client().await?;
+    client.generate(name.as_deref(), &source).await.map_err(err)
+}
+
+#[tauri::command]
+async fn context7_libraries(
+    daemon: State<'_, Daemon>,
+    name: String,
+    query: String,
+) -> CmdResult<Vec<generate::Context7Library>> {
+    let client = daemon.client().await?;
+    client.context7_libraries(&name, &query).await.map_err(err)
+}
+
+#[tauri::command]
+async fn context7_docs(
+    daemon: State<'_, Daemon>,
+    library_id: String,
+    query: String,
+) -> CmdResult<String> {
+    let client = daemon.client().await?;
+    client.context7_docs(&library_id, &query).await.map_err(err)
+}
+
 #[derive(Clone, Serialize)]
 struct OpenTarget {
     docset: String,
@@ -258,6 +288,9 @@ pub fn run() {
             create_snippet,
             update_snippet,
             delete_snippet,
+            generate,
+            context7_libraries,
+            context7_docs,
         ])
         .run(tauri::generate_context!())
         .expect("error while running DAI");

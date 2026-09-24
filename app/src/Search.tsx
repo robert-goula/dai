@@ -6,9 +6,11 @@ import styles from "./Search.module.css";
 type Props = {
   inputRef: RefObject<HTMLInputElement | null>;
   onOpen: (page: Page) => void;
+  /** Look the query up on Context7 instead. */
+  onAskContext7: (query: string) => void;
 };
 
-export function Search({ inputRef, onOpen }: Props) {
+export function Search({ inputRef, onOpen, onAskContext7 }: Props) {
   const [query, setQuery] = useState("");
   const [docset, setDocset] = useState("");
   const [active, setActive] = useState(0);
@@ -73,6 +75,11 @@ export function Search({ inputRef, onOpen }: Props) {
       )}
       {results.error && <p className={styles.errorText}>{String(results.error)}</p>}
       {q && results.isSuccess && hits.length === 0 && <p className={styles.hint}>No results.</p>}
+      {q && results.isSuccess && (
+        <button className={styles.context7} onClick={() => onAskContext7(q)}>
+          Not finding it? Ask Context7 about “{q}”
+        </button>
+      )}
 
       <ol ref={list} className={styles.results}>
         {hits.map((h, i) => (

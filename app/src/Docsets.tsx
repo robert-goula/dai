@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDeferredValue, useState } from "react";
 import { api, type CatalogEntry } from "./api";
+import { AddDocs } from "./AddDocs";
 import styles from "./Docsets.module.css";
 import type { InstallState } from "./useDaiEvents";
 
@@ -42,6 +43,27 @@ export function Docsets({ installState }: { installState: InstallState }) {
     <div className={styles.docsets}>
       <section className={styles.section}>
         <header className={styles.header}>
+          <h2>Generate</h2>
+        </header>
+        <AddDocs />
+        {[...installing]
+          .filter(([id]) => id.startsWith("md:") && !installedIds.has(id))
+          .map(([id, label]) => (
+            <p key={id} className={styles.busy}>
+              {id}: {label}
+            </p>
+          ))}
+        {[...errors]
+          .filter(([id]) => id.startsWith("md:") && !installedIds.has(id))
+          .map(([id, error]) => (
+            <p key={id} className={styles.error}>
+              {id}: {error}
+            </p>
+          ))}
+      </section>
+
+      <section className={styles.section}>
+        <header className={styles.header}>
           <h2>Installed</h2>
           <button onClick={() => checkUpdates.mutate()} disabled={checkUpdates.isPending}>
             {checkUpdates.isPending ? "Checking…" : "Check for updates"}
@@ -70,6 +92,11 @@ export function Docsets({ installState }: { installState: InstallState }) {
                 <>
                   {outdatedIds.has(d.id) && (
                     <button onClick={() => install.mutate(d.id)}>Update</button>
+                  )}
+                  {d.id.startsWith("md:") && (
+                    <button onClick={() => install.mutate(d.id)} title={`Re-run from ${d.release}`}>
+                      Regenerate
+                    </button>
                   )}
                   <button onClick={() => remove.mutate(d.id)}>Remove</button>
                 </>

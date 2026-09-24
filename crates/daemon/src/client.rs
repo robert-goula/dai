@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use dai_core::CatalogEntry;
 use dai_core::DocPage;
+use dai_core::generate;
 use dai_core::index::Hit;
 use dai_core::snippets::{Snippet, SnippetInput};
 use dai_core::store::Docset;
@@ -140,6 +141,37 @@ impl Client {
             return Ok(None);
         }
         Ok(Some(decode(res).await?))
+    }
+
+    pub async fn generate(&self, name: Option<&str>, source: &generate::Source) -> Result<Docset> {
+        let body = serde_json::json!({ "name": name, "source": source });
+        send(self.req(Method::POST, "/api/generate").json(&body)).await
+    }
+
+    pub async fn context7_libraries(
+        &self,
+        name: &str,
+        query: &str,
+    ) -> Result<Vec<generate::Context7Library>> {
+        send(
+            self.req(Method::GET, "/api/context7/libraries")
+                .query(&[("name", name), ("query", query)]),
+        )
+        .await
+    }
+
+    pub async fn context7_docs(&self, library_id: &str, query: &str) -> Result<String> {
+        let res = self
+            .req(Method::GET, "/api/context7/docs")
+            .query(&[("library_id", library_id), ("query", query)])
+            .send()
+            .await?;
+        let status = res.status();
+        let text = res.text().await?;
+        if !status.is_success() {
+            bail!("{text}");
+        }
+        Ok(text)
     }
 
     pub async fn snippets(

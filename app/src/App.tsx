@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type Page } from "./api";
 import styles from "./App.module.css";
+import { Context7Panel } from "./Context7Panel";
 import { Docsets } from "./Docsets";
 import { Search } from "./Search";
 import { SnippetEditor } from "./SnippetEditor";
@@ -13,7 +14,10 @@ type Tab = "search" | "snippets" | "docsets";
 const TABS: Record<Tab, string> = { search: "Search", snippets: "Snippets", docsets: "Docsets" };
 
 /** What the main pane shows: the doc viewer or the snippet editor (`id: null` = new). */
-type MainView = { kind: "doc" } | { kind: "snippet"; id: string | null };
+type MainView =
+  | { kind: "doc" }
+  | { kind: "snippet"; id: string | null }
+  | { kind: "context7"; query: string; n: number };
 
 export function App() {
   const [tab, setTab] = useState<Tab>("search");
@@ -28,6 +32,11 @@ export function App() {
     setMain({ kind: "doc" });
   }, []);
   const editSnippet = useCallback((id: string | null) => setMain({ kind: "snippet", id }), []);
+  const askContext7 = useCallback(
+    (query: string) =>
+      setMain((m) => ({ kind: "context7", query, n: (m.kind === "context7" ? m.n : 0) + 1 })),
+    [],
+  );
   const installState = useDaiEvents(open);
 
   // Launched from a `dai://open` link.
@@ -64,7 +73,9 @@ export function App() {
             </button>
           ))}
         </nav>
-        {tab === "search" && <Search inputRef={searchInput} onOpen={open} />}
+        {tab === "search" && (
+          <Search inputRef={searchInput} onOpen={open} onAskContext7={askContext7} />
+        )}
         {tab === "snippets" && (
           <Snippets selected={main.kind === "snippet" ? main.id : null} onSelect={editSnippet} />
         )}
@@ -79,6 +90,7 @@ export function App() {
             <Viewer base={base.data} page={opened?.page ?? null} openCount={opened?.n ?? 0} />
           </div>
         )}
+        {main.kind === "context7" && <Context7Panel key={main.n} initialQuery={main.query} />}
         {main.kind === "snippet" && (
           <SnippetEditor
             key={main.id ?? "new"}
