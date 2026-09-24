@@ -111,7 +111,7 @@ Re-running a generator counts as an "update" (`dai update md:<slug>`, or Regener
 5. **Generation + Context7.** Markdown docset format; the llms.txt, repo, folder, and Context7 generators; `dai generate`; the app's Generate form and Context7 panel with snapshot-to-docset.
 6. **Version awareness.** Manifest parsers, name and version matching, `resolve_project_versions`, `project_path` on `search_docs`, and side-by-side Dash versions (`dash:<name>@<version>`, with a version picker in the app). DevDocs already has versioned ids. Pinned docsets are never flagged as outdated. Dash archives get portable paths on extraction (e.g. `127.0.0.1:3000` → `127.0.0.1_3000`, for Windows), and symlinks/hardlinks are skipped.
 
-Separate later plans: **Raycast extension** (a thin client over `/api`), **hybrid/semantic search**, **signed installers and auto-update** (Tauri updater, code signing).
+Separate plans: [Raycast extension](2026-09-24-raycast-design.md), [hybrid/semantic search](2026-09-24-hybrid-search-design.md), and [installers, signing, updates, and the CLI on PATH](2026-09-24-distribution-design.md).
 
 ## Risks and trade-offs
 
