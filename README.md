@@ -21,8 +21,8 @@ dai install react rust dash:TypeScript
 dai search useEffect
 dai show react reference/react/useeffect
 
-# Give your agents access
-claude mcp add dai -- dai mcp
+# Give your agents access (all projects)
+claude mcp add --scope user dai -- dai mcp
 ```
 
 The CLI starts the background service (the "daemon") on first use. `dai stop` stops it.
@@ -75,9 +75,35 @@ dai generate context7 /pmndrs/zustand -t "persist middleware" -t "slices pattern
 
 ## Using DAI from agents (MCP)
 
+### Set up
+
+`dai mcp` is an MCP server over stdio. It starts the DAI service in the background if it isn't running, and connects to it. Install the CLI first (`cargo install --path crates/cli`), then register it:
+
 ```shell
+# Available in every project (recommended)
+claude mcp add --scope user dai -- dai mcp
+
+# Or only in the current project
 claude mcp add dai -- dai mcp
 ```
+
+Without `--scope user`, Claude Code registers the server for the current folder only (local scope), so other projects won't see it. Other MCP clients use the same command: `dai` with the argument `mcp`, or the absolute path from `which dai` if the client doesn't inherit your shell's PATH.
+
+### Check it's working
+
+```shell
+claude mcp list        # should show: dai: dai mcp - ✔ Connected
+dai list               # docsets the tools can see; empty means install some first
+```
+
+In a Claude Code session, `/mcp` lists the server and its tools. Try "search the docs for useEffect".
+
+### Troubleshooting
+
+- **Not listed in another project:** it was added with local scope. Run `claude mcp remove dai -s local`, then add it again with `--scope user`.
+- **Fails to connect:** run `dai mcp` in a terminal. It should wait silently for input (Ctrl+C to exit). "command not found" means `~/.cargo/bin` isn't on the PATH Claude Code sees; register the absolute path instead. If it reports the service didn't start, check `<data dir>/daemon.log`. A common cause is another process on port 4747 (set `DAI_PORT`).
+- **Tools behave like an older version:** a service started by an older build is still running. Run `dai stop`; the next call starts the new one.
+- **Connected but no results:** nothing is installed yet (`dai install react`), or the docs are for a different version than your project (pass `project_path`, or run `dai project`).
 
 Tools:
 
