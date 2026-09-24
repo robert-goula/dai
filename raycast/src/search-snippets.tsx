@@ -1,5 +1,17 @@
 import { useRef, useState } from "react";
-import { Action, ActionPanel, Alert, confirmAlert, Icon, List, showToast, Toast } from "@raycast/api";
+import {
+  Action,
+  ActionPanel,
+  Alert,
+  confirmAlert,
+  Icon,
+  Keyboard,
+  launchCommand,
+  LaunchType,
+  List,
+  showToast,
+  Toast,
+} from "@raycast/api";
 import { showFailureToast, usePromise } from "@raycast/utils";
 import { api, DaemonDownError, type Snippet } from "./daemon";
 import { snippetPath } from "./lib/discovery";
@@ -36,7 +48,23 @@ export default function SearchSnippets() {
       {down ? (
         <NotRunningView onRetry={reload} />
       ) : items.length === 0 ? (
-        <List.EmptyView icon={Icon.Code} title={query.trim() ? "No matching snippets" : "No snippets yet"} />
+        snippets.isLoading ? (
+          <List.EmptyView title="" />
+        ) : (
+          <List.EmptyView
+            icon={Icon.Code}
+            title={query.trim() ? "No matching snippets" : "No snippets yet"}
+            actions={
+              <ActionPanel>
+                <Action
+                  title="Save Snippet"
+                  icon={Icon.Plus}
+                  onAction={() => launchCommand({ name: "save-snippet", type: LaunchType.UserInitiated })}
+                />
+              </ActionPanel>
+            }
+          />
+        )
       ) : (
         items.map((s) => (
           <List.Item
@@ -82,17 +110,22 @@ function SnippetActions({
     <ActionPanel>
       <Action.Paste title="Paste Code" content={snippet.code} />
       <Action.CopyToClipboard title="Copy Code" content={snippet.code} />
-      <Action.CopyToClipboard title="Copy Snippet as Markdown" content={snippetMarkdown(snippet)} />
+      <Action.CopyToClipboard
+        title="Copy Snippet as Markdown"
+        content={snippetMarkdown(snippet)}
+        shortcut={Keyboard.Shortcut.Common.Copy}
+      />
       {file ? (
         <>
-          <Action.Open title="Open File in Editor" target={file} icon={Icon.Pencil} />
-          <Action.ShowInFinder path={file} />
+          <Action.Open title="Open File in Editor" target={file} icon={Icon.Pencil} shortcut={Keyboard.Shortcut.Common.Open} />
+          <Action.ShowInFinder path={file} shortcut={{ modifiers: ["cmd", "shift"], key: "f" }} />
         </>
       ) : null}
       <Action
         title="Delete Snippet"
         icon={Icon.Trash}
         style={Action.Style.Destructive}
+        shortcut={Keyboard.Shortcut.Common.Remove}
         onAction={async () => {
           const ok = await confirmAlert({
             title: `Delete “${snippet.title}”?`,

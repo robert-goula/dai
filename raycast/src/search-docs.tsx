@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { Action, ActionPanel, Clipboard, Icon, List, showHUD, showToast, Toast } from "@raycast/api";
+import { Action, ActionPanel, Clipboard, Icon, Keyboard, List, open, showHUD, showToast, Toast } from "@raycast/api";
 import { showFailureToast, usePromise } from "@raycast/utils";
 import { api, DaemonDownError, type Hit } from "./daemon";
 import { pageDetail } from "./lib/markdown";
@@ -60,9 +60,11 @@ export default function SearchDocs() {
       {down ? (
         <NotRunningView onRetry={retry} />
       ) : hits.length === 0 ? (
-        <List.EmptyView
-          icon={Icon.MagnifyingGlass}
-          title={query.trim() ? "No results" : "Search your installed docs"}
+        <DocsEmptyView
+          loading={docsets.isLoading || search.isLoading}
+          noDocsets={docsets.data?.length === 0}
+          query={query.trim()}
+          filtered={docset !== ""}
         />
       ) : (
         hits.map((h, i) => (
@@ -83,6 +85,33 @@ export default function SearchDocs() {
         ))
       )}
     </List>
+  );
+}
+
+function DocsEmptyView(props: { loading: boolean; noDocsets: boolean; query: string; filtered: boolean }) {
+  // Avoid flashing "No results" while a search is in flight.
+  if (props.loading) return <List.EmptyView title="" />;
+  if (props.noDocsets) {
+    return (
+      <List.EmptyView
+        icon={Icon.Book}
+        title="No docsets installed"
+        description="Install some from the DAI app."
+        actions={
+          <ActionPanel>
+            <Action title="Open DAI" icon={Icon.AppWindow} onAction={() => open("dai://")} />
+          </ActionPanel>
+        }
+      />
+    );
+  }
+  if (!props.query) return <List.EmptyView icon={Icon.MagnifyingGlass} title="Search your installed docs" />;
+  return (
+    <List.EmptyView
+      icon={Icon.MagnifyingGlass}
+      title="No results"
+      description={props.filtered ? "Try “All Docsets” in the dropdown." : undefined}
+    />
   );
 }
 
@@ -119,11 +148,15 @@ function HitActions({ hit, url }: { hit: Hit; url: string | undefined }) {
       />
       {url ? (
         <>
-          <Action.OpenInBrowser title="Open Upstream URL" url={url} />
-          <Action.CopyToClipboard title="Copy Upstream URL" content={url} />
+          <Action.OpenInBrowser title="Open Upstream URL" url={url} shortcut={Keyboard.Shortcut.Common.Open} />
+          <Action.CopyToClipboard title="Copy Upstream URL" content={url} shortcut={Keyboard.Shortcut.Common.Copy} />
         </>
       ) : null}
-      <Action.CopyToClipboard title="Copy Docset/Path" content={`${hit.docset}/${hit.path}`} />
+      <Action.CopyToClipboard
+        title="Copy Docset/Path"
+        content={`${hit.docset}/${hit.path}`}
+        shortcut={Keyboard.Shortcut.Common.CopyPath}
+      />
     </ActionPanel>
   );
 }
