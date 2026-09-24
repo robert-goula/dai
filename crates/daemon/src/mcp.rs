@@ -145,9 +145,14 @@ impl DaiMcp {
             Err(e) => return Ok(tool_error(e)),
         };
         let end = page.next_offset.unwrap_or(page.total_chars);
-        let mut out = format!(
-            "<!-- {} {} | source: {} | chars {}-{} of {}",
-            page.docset, page.path, page.url, page.offset, end, page.total_chars
+        let mut out = format!("<!-- {} {}", page.docset, page.path);
+        if !page.url.is_empty() {
+            let _ = write!(out, " | source: {}", page.url);
+        }
+        let _ = write!(
+            out,
+            " | chars {}-{} of {}",
+            page.offset, end, page.total_chars
         );
         if let Some(next) = page.next_offset {
             let _ = write!(out, " | next_offset: {next}");

@@ -20,7 +20,7 @@ Classification: **architectural, new project**. `projects/daimedia/docset/` is e
 |---|---|
 | Language | Rust (cargo workspace) |
 | Desktop | Tauri 2 + React/TS (bun, oxc for lint/format, vitest) |
-| Sources | DevDocs (primary) + Dash/Zeal feeds (Kapeli + user-contributed) |
+| Sources | DevDocs + Dash docsets via the Zeal catalog (Kapeli official, user-contributed, cheatsheets). Dash ids are `dash:<name>`. |
 | Canonical text | **Markdown.** Every source gets normalized into heading-chunked markdown for search and MCP. The original HTML is kept for viewing in the app. |
 | MDX | Read as markdown: strip `import`/`export`, render unknown JSX as its children, map a few common components (Tabs, Callout/Admonition, CodeGroup). No runtime MDX compile or eval. |
 | Search | BM25 via tantivy now. Hybrid/embeddings is a separate later plan. |
@@ -58,9 +58,9 @@ app ──────▶ │ event stream /api/events (SSE) ← open_in_app, up
 
 - DevDocs catalog: `https://devdocs.io/docs.json` has 836 docs, each with `{name, slug, version, release, mtime, db_size, links, attribution}`. Needs a User-Agent header.
 - DevDocs per-doc: `https://documents.devdocs.io/<slug>/index.json` → `{entries:[{name,path,type}], types:[…]}`, and `db.json` → `{path: html}`. We update when `mtime` changes.
-- Kapeli feeds: `raw.githubusercontent.com/Kapeli/feeds/master/<Name>.xml` → `<entry><version>`, mirror `<url>`s to `.tgz`, `<other-versions>`.
-- Zeal user-contributed: `https://zealusercontributions.vercel.app/api/docsets` gives JSON with `name`, `archive`, `aliases`, icons.
-- Inside a Dash docset: `Contents/Resources/docSet.dsidx` has the `searchIndex(name, type, path)` table, plus `Documents/`.
+- Zeal catalog: `https://api.zealdocs.org/v1/docsets` has 981 Dash docsets (Kapeli official, `_Contrib` user-contributed, `_Cheatsheet`) in one list: `{name, title, versions[] (newest first; may contain nulls), size}`. It replaces reading the Kapeli XML feeds and user-contributed index separately.
+- Dash download: `https://go.zealdocs.org/d/com.kapeli/<name>/latest` (or `/<version>`) redirects to the `.tgz`. Sizes go up to 3.3GB, so downloads stream to disk.
+- Inside a Dash docset: `Contents/Resources/docSet.dsidx` has the `searchIndex(name, type, path)` table, plus `Documents/`. Paths may carry `#//dash_ref…` anchors (already percent-encoded). Extracted docsets live under `<data dir>/docsets/dash/<name>/` and the viewer serves them from disk; only the markdown goes into `meta.db`. Markdown comes from each page's `<article>`/`<main>`, falling back to `<body>`.
 
 ### Normalization and indexing
 
@@ -82,7 +82,7 @@ app ──────▶ │ event stream /api/events (SSE) ← open_in_app, up
 
 - Search-first UI: a type-ahead box, a results list filtered by docset, a doc viewer, and a table of contents (TOC deferred past Phase 2).
 - Doc viewer: an iframe of the daemon's `/content/<docset>/<path>` for sources that have HTML, sandboxed and allow-listed in the CSP. A markdown renderer (react-markdown + remark-gfm + our MDX shim) for generated and markdown docsets and snippets.
-- Docset manager: browse the catalog (DevDocs + Dash + user-contributed), install, remove, update, and "update all". It shows stale/outdated state and progress over SSE.
+- Docset manager: browse the catalog (DevDocs + Dash, filterable by source), install, remove, update, and "update all". It shows stale/outdated state and progress over SSE.
 - Snippets: list, edit, tag, and copy. The global-hotkey quick palette uses the Tauri global-shortcut plugin.
 - "Not found locally" → a **Context7** panel: query Context7 using the API key from settings, then optionally "Save as docset" (a snapshot saved as a markdown docset).
 - Deep-link handler for `dai://open`, plus a listener for SSE `open` events.
@@ -105,7 +105,7 @@ Re-running a generator counts as an "update". The manager shows `generated_at` s
 0. **Scaffold:** `git init`, the cargo workspace, the three crates, CI config for fmt/clippy/test on mac, win, and linux, and a copy of this spec in `docs/specs/2026-09-24-dai-design.md`.
 1. **Core + daemon + MCP (DevDocs only).** Catalog fetch, install/update of DevDocs docsets, normalize, index, search, CLI commands, the `serve` HTTP API, MCP `list_docsets`/`search_docs`/`get_doc` over stdio and HTTP. *Done when Claude Code can answer from local React/Rust docs through `dai mcp`.*
 2. **Desktop app v1.** Search, viewer, docset manager, SSE progress, auto-starting the daemon, `open_in_app` + deep link.
-3. **Dash/Zeal feeds.** Kapeli and user-contributed catalogs, `.tgz` install, dsidx import, the same normalize/index pipeline.
+3. **Dash/Zeal docsets.** Zeal catalog, streamed `.tgz` install with progress events, dsidx import, the same normalize/index pipeline.
 4. **Snippets.** Store, watcher, index, MCP snippet tools, app editor, hotkey palette.
 5. **Generation + Context7.** Markdown docset format, the llms.txt and repo generators, the app's Context7 panel and snapshot-to-docset.
 6. **Version awareness.** Manifest parsers, `resolve_project_versions`, `project_path` on `search_docs`, side-by-side installs of multiple versions.

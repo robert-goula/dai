@@ -5,8 +5,8 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
+use dai_core::CatalogEntry;
 use dai_core::DocPage;
-use dai_core::devdocs::CatalogDoc;
 use dai_core::index::Hit;
 use dai_core::store::Docset;
 use reqwest::{Method, RequestBuilder, StatusCode};
@@ -78,7 +78,7 @@ impl Client {
         }
     }
 
-    pub async fn catalog(&self, refresh: bool) -> Result<Vec<CatalogDoc>> {
+    pub async fn catalog(&self, refresh: bool) -> Result<Vec<CatalogEntry>> {
         send(
             self.req(Method::GET, "/api/catalog")
                 .query(&[("refresh", refresh)]),

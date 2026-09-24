@@ -87,3 +87,10 @@
   font-size: 12px;
   overflow-wrap: anywhere;
 }
+
+.source {
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 11px;
+}

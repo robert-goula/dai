@@ -10,13 +10,15 @@ export type Docset = {
   installed_at: number;
 };
 
-export type CatalogDoc = {
+export type CatalogEntry = {
+  /** Docset id once installed: a DevDocs slug or `dash:<name>`. */
+  id: string;
   name: string;
-  slug: string;
+  source: "devdocs" | "dash";
   version: string;
-  release: string;
+  /** Download size in bytes. */
+  size: number;
   mtime: number;
-  db_size: number;
 };
 
 export type Hit = {
@@ -35,6 +37,13 @@ export type Page = { docset: string; path: string };
 /** Emitted by the Rust side as `dai-event` (mirrors `DaiEvent` in the daemon). */
 export type DaiEvent =
   | { type: "install_started"; id: string }
+  | {
+      type: "install_progress";
+      id: string;
+      stage: "download" | "index";
+      bytes: number;
+      total: number | null;
+    }
   | { type: "install_finished"; id: string; error: string | null }
   | { type: "removed"; id: string }
   | ({ type: "open" } & Page);
@@ -44,7 +53,7 @@ export const DAI_EVENT = "dai-event";
 export const api = {
   daemonUrl: () => invoke<string>("daemon_url"),
   docsets: () => invoke<Docset[]>("docsets"),
-  catalog: (refresh = false) => invoke<CatalogDoc[]>("catalog", { refresh }),
+  catalog: (refresh = false) => invoke<CatalogEntry[]>("catalog", { refresh }),
   outdated: (refresh = false) => invoke<Docset[]>("outdated", { refresh }),
   install: (id: string) => invoke<Docset>("install", { id }),
   remove: (id: string) => invoke<boolean>("remove", { id }),

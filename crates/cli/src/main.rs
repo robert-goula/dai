@@ -25,7 +25,7 @@ enum Command {
     Mcp,
     /// Stop the running daemon.
     Stop,
-    /// List available DevDocs docsets.
+    /// List available docsets (DevDocs and Dash/Zeal).
     Catalog {
         /// Only show docsets whose name or slug contains this.
         filter: Option<String>,
@@ -33,7 +33,7 @@ enum Command {
         #[arg(long)]
         refresh: bool,
     },
-    /// Download and index DevDocs docsets by slug (e.g. `react`, `python~3.12`).
+    /// Download and index docsets by id (e.g. `react`, `python~3.12`, `dash:React`).
     Install { slugs: Vec<String> },
     /// Update the given docsets, or every outdated one.
     Update { slugs: Vec<String> },
@@ -92,18 +92,16 @@ async fn main() -> Result<()> {
             let filter = filter.map(|f| f.to_lowercase());
             let installed: Vec<String> = c.docsets().await?.into_iter().map(|d| d.id).collect();
             for d in c.catalog(refresh).await? {
-                if filter
-                    .as_ref()
-                    .is_some_and(|f| !d.slug.contains(f) && !d.name.to_lowercase().contains(f))
-                {
+                if filter.as_ref().is_some_and(|f| {
+                    !d.id.to_lowercase().contains(f) && !d.name.to_lowercase().contains(f)
+                }) {
                     continue;
                 }
-                let mark = if installed.contains(&d.slug) {
-                    "*"
-                } else {
-                    " "
-                };
-                println!("{mark} {:<32} {:<28} {}", d.slug, d.name, d.release);
+                let mark = if installed.contains(&d.id) { "*" } else { " " };
+                println!(
+                    "{mark} {:<36} {:<36} {:<12} {}",
+                    d.id, d.name, d.version, d.source
+                );
             }
         }
         (Command::Install { slugs }, c) => {

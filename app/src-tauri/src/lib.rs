@@ -4,7 +4,7 @@
 
 use std::time::Duration;
 
-use dai_core::devdocs::CatalogDoc;
+use dai_core::CatalogEntry;
 use dai_core::index::Hit;
 use dai_core::paths;
 use dai_core::store::Docset;
@@ -47,7 +47,7 @@ async fn docsets(daemon: State<'_, Daemon>) -> CmdResult<Vec<Docset>> {
 }
 
 #[tauri::command]
-async fn catalog(daemon: State<'_, Daemon>, refresh: bool) -> CmdResult<Vec<CatalogDoc>> {
+async fn catalog(daemon: State<'_, Daemon>, refresh: bool) -> CmdResult<Vec<CatalogEntry>> {
     daemon.client().await?.catalog(refresh).await.map_err(err)
 }
 

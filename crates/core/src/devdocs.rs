@@ -11,8 +11,6 @@ use crate::store::Entry;
 
 const CATALOG_URL: &str = "https://devdocs.io/docs.json";
 const DOCS_BASE: &str = "https://documents.devdocs.io";
-// devdocs.io returns an empty body without a user agent.
-const USER_AGENT: &str = concat!("dai/", env!("CARGO_PKG_VERSION"));
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CatalogDoc {
@@ -41,11 +39,9 @@ pub struct Client {
 
 impl Client {
     pub fn new() -> Result<Self> {
-        let http = reqwest::blocking::Client::builder()
-            .user_agent(USER_AGENT)
-            .timeout(Duration::from_secs(600))
-            .build()?;
-        Ok(Self { http })
+        Ok(Self {
+            http: crate::net::client(Some(Duration::from_secs(600)))?,
+        })
     }
 
     pub fn catalog(&self) -> Result<Vec<CatalogDoc>> {

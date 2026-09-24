@@ -14,12 +14,31 @@ pub struct Chunk {
 
 pub fn html_to_markdown(html: &str) -> Result<String> {
     let converter = htmd::HtmlToMarkdown::builder()
-        .skip_tags(vec!["script", "style", "nav"])
+        .skip_tags(vec![
+            "script", "style", "nav", "aside", "footer", "svg", "noscript", "button",
+        ])
         .build();
     let md = converter.convert(html)?;
     // Heading permalinks come through as `[](#anchor "Link for …")`.
     static EMPTY_LINK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"\[\]\([^)]*\)"#).unwrap());
     Ok(EMPTY_LINK.replace_all(&md, "").into_owned())
+}
+
+/// The main content of a full HTML page (site captures in Dash docsets carry
+/// navigation, sidebars, and footers): the first `<article>`, `<main>`, or
+/// `[role=main]`, else the whole `<body>`.
+pub fn main_content(html: &str) -> String {
+    static SELECTORS: LazyLock<Vec<scraper::Selector>> = LazyLock::new(|| {
+        ["article", "main", "[role=main]", "body"]
+            .into_iter()
+            .map(|s| scraper::Selector::parse(s).unwrap())
+            .collect()
+    });
+    let doc = scraper::Html::parse_document(html);
+    SELECTORS
+        .iter()
+        .find_map(|s| doc.select(s).next())
+        .map_or_else(|| html.to_string(), |el| el.inner_html())
 }
 
 /// Splits markdown at ATX headings (ignoring ones inside code fences).
@@ -121,6 +140,17 @@ mod tests {
         assert!(md.contains("# Title"));
         assert!(md.contains("`x`"));
         assert!(!md.contains("bad()"));
+    }
+
+    #[test]
+    fn main_content_prefers_article_then_body() {
+        let page = "<html><body><nav>menu</nav><main><aside>toc</aside>\
+                    <article><h1>Title</h1><p>text</p></article></main><footer>f</footer></body></html>";
+        let main = main_content(page);
+        assert!(main.contains("<h1>Title</h1>") && !main.contains("menu") && !main.contains("toc"));
+
+        let plain = main_content("<html><body><p>just body</p></body></html>");
+        assert_eq!(plain.trim(), "<p>just body</p>");
     }
 
     #[test]

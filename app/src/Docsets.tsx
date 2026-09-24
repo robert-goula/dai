@@ -1,12 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDeferredValue, useState } from "react";
-import { api, type CatalogDoc } from "./api";
+import { api, type CatalogEntry } from "./api";
 import styles from "./Docsets.module.css";
 import type { InstallState } from "./useDaiEvents";
+
+type Source = "" | CatalogEntry["source"];
 
 export function Docsets({ installState }: { installState: InstallState }) {
   const queryClient = useQueryClient();
   const [filter, setFilter] = useState("");
+  const [source, setSource] = useState<Source>("");
   const deferredFilter = useDeferredValue(filter.trim().toLowerCase());
 
   const installed = useQuery({ queryKey: ["docsets"], queryFn: api.docsets });
@@ -31,7 +34,8 @@ export function Docsets({ installState }: { installState: InstallState }) {
   const installedIds = new Set(installed.data?.map((d) => d.id));
   const outdatedIds = new Set(outdated.data?.map((d) => d.id));
   const available = (catalog.data ?? []).filter(
-    (d) => !installedIds.has(d.slug) && matches(d, deferredFilter),
+    (d) =>
+      !installedIds.has(d.id) && (!source || d.source === source) && matches(d, deferredFilter),
   );
 
   return (
@@ -61,7 +65,7 @@ export function Docsets({ installState }: { installState: InstallState }) {
                 {errors.has(d.id) && <span className={styles.error}>{errors.get(d.id)}</span>}
               </div>
               {installing.has(d.id) ? (
-                <span className={styles.busy}>Updating…</span>
+                <span className={styles.busy}>{installing.get(d.id)}</span>
               ) : (
                 <>
                   {outdatedIds.has(d.id) && (
@@ -78,7 +82,15 @@ export function Docsets({ installState }: { installState: InstallState }) {
       <section className={styles.section}>
         <header className={styles.header}>
           <h2>Available</h2>
-          <span className={styles.meta}>DevDocs</span>
+          <select
+            value={source}
+            onChange={(e) => setSource(e.target.value as Source)}
+            aria-label="Source"
+          >
+            <option value="">All sources</option>
+            <option value="devdocs">DevDocs</option>
+            <option value="dash">Dash</option>
+          </select>
         </header>
         <input
           type="search"
@@ -90,18 +102,19 @@ export function Docsets({ installState }: { installState: InstallState }) {
         {catalog.error && <p className={styles.error}>{String(catalog.error)}</p>}
         <ul className={styles.list}>
           {available.map((d) => (
-            <li key={d.slug} className={styles.row}>
+            <li key={d.id} className={styles.row}>
               <div className={styles.info}>
                 <span className={styles.name}>{d.name}</span>
                 <span className={styles.meta}>
-                  {d.slug} · {d.release || d.version} · {formatSize(d.db_size)}
+                  <span className={styles.source}>{d.source}</span> {d.id}
+                  {d.version && ` · ${d.version}`} · {formatSize(d.size)}
                 </span>
-                {errors.has(d.slug) && <span className={styles.error}>{errors.get(d.slug)}</span>}
+                {errors.has(d.id) && <span className={styles.error}>{errors.get(d.id)}</span>}
               </div>
-              {installing.has(d.slug) ? (
-                <span className={styles.busy}>Installing…</span>
+              {installing.has(d.id) ? (
+                <span className={styles.busy}>{installing.get(d.id)}</span>
               ) : (
-                <button onClick={() => install.mutate(d.slug)}>Install</button>
+                <button onClick={() => install.mutate(d.id)}>Install</button>
               )}
             </li>
           ))}
@@ -111,8 +124,8 @@ export function Docsets({ installState }: { installState: InstallState }) {
   );
 }
 
-function matches(d: CatalogDoc, filter: string): boolean {
-  return !filter || d.slug.includes(filter) || d.name.toLowerCase().includes(filter);
+function matches(d: CatalogEntry, filter: string): boolean {
+  return !filter || d.id.toLowerCase().includes(filter) || d.name.toLowerCase().includes(filter);
 }
 
 function formatSize(bytes: number): string {

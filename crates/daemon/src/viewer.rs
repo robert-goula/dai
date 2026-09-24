@@ -49,14 +49,29 @@ document.addEventListener("click", (e) => {
 
 pub fn wrap(docset: &str, path: &str, html: &str) -> String {
     let title = path.rsplit('/').next().unwrap_or(path);
-    let js_str = |s: &str| serde_json::to_string(s).expect("string serializes");
     format!(
         "<!doctype html><html><head><meta charset=\"utf-8\"><title>{title}</title>\
-         <style>{STYLE}</style></head><body><main>{html}</main>\
-         <script>const DAI_DOCSET = {}; const DAI_PATH = {};{SCRIPT}</script></body></html>",
-        js_str(docset),
-        js_str(path),
+         <style>{STYLE}</style></head><body><main>{html}</main>{script}</body></html>",
         title = html_escape(title),
+        script = script_tag(docset, path),
+    )
+}
+
+/// Adds the shell script to a complete page (Dash docsets keep their own styling).
+pub fn inject(docset: &str, path: &str, html: &str) -> String {
+    let script = script_tag(docset, path);
+    match html.to_ascii_lowercase().rfind("</body>") {
+        Some(i) => format!("{}{script}{}", &html[..i], &html[i..]),
+        None => format!("{html}{script}"),
+    }
+}
+
+fn script_tag(docset: &str, path: &str) -> String {
+    let js_str = |s: &str| serde_json::to_string(s).expect("string serializes");
+    format!(
+        "<script>const DAI_DOCSET = {}; const DAI_PATH = {};{SCRIPT}</script>",
+        js_str(docset),
+        js_str(path)
     )
 }
 
@@ -64,4 +79,18 @@ fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inject_goes_before_body_close() {
+        let out = inject("dash:X", "a.html", "<html><BODY><p>hi</p></BODY></html>");
+        let script = out.find("<script>").unwrap();
+        assert!(script > out.find("<p>hi</p>").unwrap());
+        assert!(script < out.find("</BODY>").unwrap());
+        assert!(out.contains(r#"const DAI_DOCSET = "dash:X""#));
+    }
 }

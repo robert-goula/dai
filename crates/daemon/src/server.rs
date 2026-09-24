@@ -3,7 +3,7 @@
 use std::convert::Infallible;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result};
 use axum::extract::{Path as UrlPath, Query, Request, State};
@@ -13,7 +13,7 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use dai_core::Library;
+use dai_core::{Library, Progress};
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 use serde::{Deserialize, Serialize};
@@ -167,8 +167,8 @@ async fn install(
 ) -> ApiResult<Json<impl Serialize>> {
     s.local.emit(DaiEvent::InstallStarted { id: id.clone() });
     let res = blocking(&s.local.lib, {
-        let id = id.clone();
-        move |l| l.install(&id)
+        let (id, local) = (id.clone(), s.local.clone());
+        move |l| l.install(&id, &progress_reporter(&id, &local))
     })
     .await;
     s.local.emit(DaiEvent::InstallFinished {
@@ -176,6 +176,31 @@ async fn install(
         error: res.as_ref().err().map(|e| format!("{e:#}")),
     });
     Ok(Json(res?))
+}
+
+/// Turns library progress into `install_progress` events, throttled to whole
+/// percent steps (or every 4 MB when the size is unknown).
+fn progress_reporter<'a>(id: &'a str, local: &'a Local) -> impl Fn(Progress) + Sync + 'a {
+    let last_step = AtomicU64::new(u64::MAX);
+    move |p| {
+        let (stage, bytes, total) = match p {
+            Progress::Download { bytes, total } => ("download", bytes, total),
+            Progress::Index => ("index", 0, None),
+        };
+        let step = match (stage, total) {
+            ("index", _) => u64::MAX - 1,
+            (_, Some(t)) if t > 0 => bytes * 100 / t,
+            _ => bytes / (4 << 20),
+        };
+        if last_step.swap(step, Ordering::Relaxed) != step {
+            local.emit(DaiEvent::InstallProgress {
+                id: id.to_string(),
+                stage: stage.into(),
+                bytes,
+                total,
+            });
+        }
+    }
 }
 
 async fn remove(
@@ -248,6 +273,26 @@ async fn content(
     State(s): State<AppState>,
     UrlPath((docset, path)): UrlPath<(String, String)>,
 ) -> ApiResult<Response> {
+    // Dash docsets are served from disk, assets included.
+    let file = blocking(&s.local.lib, {
+        let (docset, path) = (docset.clone(), path.clone());
+        move |l| l.content_file(&docset, &path)
+    })
+    .await?;
+    if let Some(file) = file {
+        let bytes = tokio::fs::read(&file).await.map_err(anyhow::Error::from)?;
+        let mime = mime_guess::from_path(&file).first_or_octet_stream();
+        if mime.subtype() == mime_guess::mime::HTML {
+            let html = String::from_utf8_lossy(&bytes);
+            return Ok(Html(viewer::inject(&docset, &path, &html)).into_response());
+        }
+        return Ok((
+            [(header::CONTENT_TYPE, mime.essence_str().to_string())],
+            bytes,
+        )
+            .into_response());
+    }
+
     let page = blocking(&s.local.lib, {
         let (docset, path) = (docset.clone(), path.clone());
         move |l| l.page_html(&docset, &path)

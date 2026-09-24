@@ -15,4 +15,10 @@ describe("contentUrl", () => {
       "http://127.0.0.1:4747/content/python~3.12/library/a%20b",
     );
   });
+
+  it("does not re-encode Dash anchors", () => {
+    expect(contentUrl(base, "dash:React", "a/index.html#//dash_ref_1/Section/use%28x%29/0")).toBe(
+      "http://127.0.0.1:4747/content/dash%3AReact/a/index.html#//dash_ref_1/Section/use%28x%29/0",
+    );
+  });
 });

@@ -27,6 +27,13 @@ pub enum DaiEvent {
     InstallStarted {
         id: String,
     },
+    /// `stage` is `download` (`bytes` of `total`) or `index`.
+    InstallProgress {
+        id: String,
+        stage: String,
+        bytes: u64,
+        total: Option<u64>,
+    },
     InstallFinished {
         id: String,
         error: Option<String>,
