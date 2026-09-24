@@ -860,6 +860,8 @@ mod tests {
                ('Widget.frob', 'Method', 'api/widget.html#//dash_ref/Method/frob/0');",
         )
         .unwrap();
+        // Windows can't rename a directory with an open file inside it.
+        drop(conn);
         let ds = Docset {
             id: "dash:Widgets".into(),
             name: "Widgets".into(),
