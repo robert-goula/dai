@@ -12,8 +12,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::dash::{self, ZealDoc};
 use crate::devdocs::{self, CatalogDoc, DocDb, DocIndex};
+use crate::index::SNIPPETS_DOCSET;
 use crate::index::{Hit, Index, IndexDoc};
 use crate::normalize::{chunk_markdown, html_to_markdown, main_content};
+use crate::snippets::{Snippet, SnippetInput, SnippetStore};
 use crate::store::{self, Docset, Entry, Page, Store};
 
 const CATALOG_MAX_AGE_SECS: u64 = 24 * 60 * 60;
@@ -62,19 +64,23 @@ pub struct Library {
     home: PathBuf,
     store: Store,
     index: Index,
+    snippets: SnippetStore,
     /// Serializes writers: tantivy allows one index writer at a time.
     write_lock: Mutex<()>,
 }
 
 impl Library {
-    pub fn open(home: &Path) -> Result<Self> {
+    pub fn open(home: &Path, snippets_dir: &Path) -> Result<Self> {
         std::fs::create_dir_all(home)?;
-        Ok(Self {
+        let lib = Self {
             home: home.to_path_buf(),
             store: Store::open(&home.join("meta.db"))?,
             index: Index::open(&home.join("index"))?,
+            snippets: SnippetStore::open(snippets_dir)?,
             write_lock: Mutex::new(()),
-        })
+        };
+        lib.index_snippets()?;
+        Ok(lib)
     }
 
     /// Every installable docset (DevDocs, then Dash), cached for a day unless `refresh`.
@@ -405,6 +411,102 @@ impl Library {
     }
 }
 
+impl Library {
+    pub fn snippets_dir(&self) -> &Path {
+        self.snippets.dir()
+    }
+
+    /// Snippets matching `query` (ranked), or all of them newest first when
+    /// `query` is empty. `language` and `tag` filter case-insensitively.
+    pub fn snippets(
+        &self,
+        query: &str,
+        language: Option<&str>,
+        tag: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<Snippet>> {
+        let keep = |s: &Snippet| {
+            language.is_none_or(|l| s.language.eq_ignore_ascii_case(l))
+                && tag.is_none_or(|t| s.tags.iter().any(|x| x.eq_ignore_ascii_case(t)))
+        };
+        if query.trim().is_empty() {
+            let mut all: Vec<Snippet> = self
+                .snippets
+                .all()
+                .values()
+                .filter(|s| keep(s))
+                .cloned()
+                .collect();
+            all.sort_by(|a, b| b.updated.cmp(&a.updated));
+            all.truncate(limit);
+            return Ok(all);
+        }
+        // Over-fetch so filtering still leaves `limit` results.
+        let hits = self
+            .index
+            .search(query, &[SNIPPETS_DOCSET.to_string()], limit * 4 + 10)?;
+        let all = self.snippets.all();
+        Ok(hits
+            .iter()
+            .filter_map(|h| all.get(&h.path))
+            .filter(|s| keep(s))
+            .take(limit)
+            .cloned()
+            .collect())
+    }
+
+    pub fn snippet(&self, id: &str) -> Option<Snippet> {
+        self.snippets.get(id)
+    }
+
+    pub fn create_snippet(&self, input: SnippetInput) -> Result<Snippet> {
+        let s = self.snippets.create(input)?;
+        self.index_snippets()?;
+        Ok(s)
+    }
+
+    pub fn update_snippet(&self, id: &str, input: SnippetInput) -> Result<Snippet> {
+        let s = self.snippets.update(id, input)?;
+        self.index_snippets()?;
+        Ok(s)
+    }
+
+    pub fn delete_snippet(&self, id: &str) -> Result<bool> {
+        let deleted = self.snippets.delete(id)?;
+        self.index_snippets()?;
+        Ok(deleted)
+    }
+
+    /// Re-reads the snippets folder (after outside edits) and reindexes it.
+    pub fn reload_snippets(&self) -> Result<()> {
+        self.snippets.reload()?;
+        self.index_snippets()
+    }
+
+    fn index_snippets(&self) -> Result<()> {
+        let all = self.snippets.all();
+        let rows: Vec<(&Snippet, String, String)> = all
+            .values()
+            .map(|s| {
+                (
+                    s,
+                    s.tags.join(" "),
+                    format!("{}\n{}\n{}", s.description, s.code, s.notes),
+                )
+            })
+            .collect();
+        let docs = rows.iter().map(|(s, tags, text)| IndexDoc::Snippet {
+            id: &s.id,
+            title: &s.title,
+            language: &s.language,
+            tags,
+            text,
+        });
+        let _w = self.write_lock();
+        self.index.replace_docset(SNIPPETS_DOCSET, docs)
+    }
+}
+
 /// A path without its `#fragment` or `?query`.
 fn page_path(path: &str) -> &str {
     path.split(['#', '?']).next().unwrap_or(path)
@@ -437,7 +539,7 @@ mod tests {
 
     fn fixture() -> (tempfile::TempDir, Library) {
         let dir = tempfile::tempdir().unwrap();
-        let lib = Library::open(dir.path()).unwrap();
+        let lib = Library::open(dir.path(), &dir.path().join("snippets")).unwrap();
         let doc = CatalogDoc {
             name: "React".into(),
             slug: "react".into(),
@@ -610,5 +712,55 @@ mod tests {
         assert!(lib.remove("dash:Widgets").unwrap());
         assert!(!dest.exists());
         assert!(lib.search("frob", &[], 5).unwrap().is_empty());
+    }
+
+    #[test]
+    fn snippets_search_filter_and_stay_out_of_doc_search() {
+        let (_d, lib) = fixture();
+        let input = |title: &str, lang: &str, tags: &[&str], code: &str| SnippetInput {
+            title: title.into(),
+            language: lang.into(),
+            tags: tags.iter().map(|t| t.to_string()).collect(),
+            code: code.into(),
+            ..Default::default()
+        };
+        lib.create_snippet(input(
+            "useEffect cleanup pattern",
+            "tsx",
+            &["react"],
+            "useEffect(() => () => ws.close(), [])",
+        ))
+        .unwrap();
+        lib.create_snippet(input(
+            "Retry with backoff",
+            "rust",
+            &["async"],
+            "for attempt in 0..5 {}",
+        ))
+        .unwrap();
+
+        let found = lib.snippets("cleanup", None, None, 10).unwrap();
+        assert_eq!(found[0].id, "useeffect-cleanup-pattern");
+        assert!(
+            lib.snippets("cleanup", Some("rust"), None, 10)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            lib.snippets("", None, Some("ASYNC"), 10).unwrap()[0].id,
+            "retry-with-backoff"
+        );
+        assert_eq!(lib.snippets("", None, None, 10).unwrap().len(), 2);
+
+        // Doc search without a docset filter doesn't return snippets.
+        assert!(
+            lib.search("useEffect", &[], 20)
+                .unwrap()
+                .iter()
+                .all(|h| h.kind != "snippet")
+        );
+
+        assert!(lib.delete_snippet("retry-with-backoff").unwrap());
+        assert!(lib.snippets("backoff", None, None, 10).unwrap().is_empty());
     }
 }

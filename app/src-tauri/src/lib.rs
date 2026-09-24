@@ -7,6 +7,7 @@ use std::time::Duration;
 use dai_core::CatalogEntry;
 use dai_core::index::Hit;
 use dai_core::paths;
+use dai_core::snippets::{Snippet, SnippetInput};
 use dai_core::store::Docset;
 use dai_daemon::DaiEvent;
 use dai_daemon::client::Client;
@@ -77,6 +78,59 @@ async fn search(
         .client()
         .await?
         .search(&query, &docsets, limit)
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
+async fn snippets(
+    daemon: State<'_, Daemon>,
+    query: String,
+    language: Option<String>,
+    tag: Option<String>,
+) -> CmdResult<Vec<Snippet>> {
+    let client = daemon.client().await?;
+    client
+        .snippets(&query, language.as_deref(), tag.as_deref(), 500)
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
+async fn snippet(daemon: State<'_, Daemon>, id: String) -> CmdResult<Option<Snippet>> {
+    daemon.client().await?.snippet(&id).await.map_err(err)
+}
+
+#[tauri::command]
+async fn create_snippet(daemon: State<'_, Daemon>, input: SnippetInput) -> CmdResult<Snippet> {
+    daemon
+        .client()
+        .await?
+        .create_snippet(&input)
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
+async fn update_snippet(
+    daemon: State<'_, Daemon>,
+    id: String,
+    input: SnippetInput,
+) -> CmdResult<Snippet> {
+    daemon
+        .client()
+        .await?
+        .update_snippet(&id, &input)
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
+async fn delete_snippet(daemon: State<'_, Daemon>, id: String) -> CmdResult<bool> {
+    daemon
+        .client()
+        .await?
+        .delete_snippet(&id)
         .await
         .map_err(err)
 }
@@ -199,6 +253,11 @@ pub fn run() {
             remove,
             search,
             initial_open,
+            snippets,
+            snippet,
+            create_snippet,
+            update_snippet,
+            delete_snippet,
         ])
         .run(tauri::generate_context!())
         .expect("error while running DAI");

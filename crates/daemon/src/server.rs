@@ -4,6 +4,7 @@ use std::convert::Infallible;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use axum::extract::{Path as UrlPath, Query, Request, State};
@@ -13,7 +14,10 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use dai_core::snippets::{Snippet, SnippetInput};
 use dai_core::{Library, Progress};
+use notify_debouncer_mini::notify::{RecommendedWatcher, RecursiveMode};
+use notify_debouncer_mini::{DebounceEventResult, Debouncer, new_debouncer};
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 use serde::{Deserialize, Serialize};
@@ -39,7 +43,11 @@ struct AppState {
 }
 
 pub async fn serve(home: &Path, port: u16) -> Result<()> {
-    let local = Arc::new(Local::new(Library::open(home)?));
+    let local = Arc::new(Local::new(Library::open(
+        home,
+        &dai_core::paths::snippets_dir()?,
+    )?));
+    let _watcher = watch_snippets(local.clone())?;
     let shutdown = CancellationToken::new();
     let state = AppState {
         local: local.clone(),
@@ -62,6 +70,11 @@ pub async fn serve(home: &Path, port: u16) -> Result<()> {
         .route("/api/outdated", get(outdated))
         .route("/api/search", get(search))
         .route("/api/doc", get(get_doc))
+        .route("/api/snippets", get(list_snippets).post(create_snippet))
+        .route(
+            "/api/snippets/{id}",
+            get(get_snippet).put(update_snippet).delete(delete_snippet),
+        )
         .route("/api/events", get(events))
         .route("/api/open", post(open))
         .route("/api/shutdown", post(shutdown_handler))
@@ -351,6 +364,94 @@ async fn get_doc(State(s): State<AppState>, Query(p): Query<DocParams>) -> ApiRe
         Some(page) => Json(page).into_response(),
         None => (StatusCode::NOT_FOUND, "no such page").into_response(),
     })
+}
+
+/// Reloads snippets when files in the folder change (hand edits, git pulls).
+/// Dropping the returned debouncer stops watching.
+fn watch_snippets(local: Arc<Local>) -> Result<Debouncer<RecommendedWatcher>> {
+    let dir = local.lib.snippets_dir().to_path_buf();
+    let rt = tokio::runtime::Handle::current();
+    let mut debouncer = new_debouncer(
+        Duration::from_millis(300),
+        move |res: DebounceEventResult| {
+            if res.is_err() {
+                return;
+            }
+            let local = local.clone();
+            rt.spawn(async move {
+                if blocking(&local.lib, |l| l.reload_snippets()).await.is_ok() {
+                    local.emit(DaiEvent::SnippetsChanged);
+                }
+            });
+        },
+    )?;
+    debouncer
+        .watcher()
+        .watch(&dir, RecursiveMode::NonRecursive)?;
+    Ok(debouncer)
+}
+
+#[derive(Deserialize)]
+struct SnippetParams {
+    #[serde(default)]
+    q: String,
+    language: Option<String>,
+    tag: Option<String>,
+    #[serde(default = "default_snippet_limit")]
+    limit: usize,
+}
+
+fn default_snippet_limit() -> usize {
+    200
+}
+
+async fn list_snippets(
+    State(s): State<AppState>,
+    Query(p): Query<SnippetParams>,
+) -> ApiResult<Json<Vec<Snippet>>> {
+    Ok(Json(
+        blocking(&s.local.lib, move |l| {
+            l.snippets(&p.q, p.language.as_deref(), p.tag.as_deref(), p.limit)
+        })
+        .await?,
+    ))
+}
+
+async fn get_snippet(State(s): State<AppState>, UrlPath(id): UrlPath<String>) -> Response {
+    match s.local.lib.snippet(&id) {
+        Some(snippet) => Json(snippet).into_response(),
+        None => (StatusCode::NOT_FOUND, "no such snippet").into_response(),
+    }
+}
+
+async fn create_snippet(
+    State(s): State<AppState>,
+    Json(input): Json<SnippetInput>,
+) -> ApiResult<Json<Snippet>> {
+    let snippet = blocking(&s.local.lib, move |l| l.create_snippet(input)).await?;
+    s.local.emit(DaiEvent::SnippetsChanged);
+    Ok(Json(snippet))
+}
+
+async fn update_snippet(
+    State(s): State<AppState>,
+    UrlPath(id): UrlPath<String>,
+    Json(input): Json<SnippetInput>,
+) -> ApiResult<Json<Snippet>> {
+    let snippet = blocking(&s.local.lib, move |l| l.update_snippet(&id, input)).await?;
+    s.local.emit(DaiEvent::SnippetsChanged);
+    Ok(Json(snippet))
+}
+
+async fn delete_snippet(
+    State(s): State<AppState>,
+    UrlPath(id): UrlPath<String>,
+) -> ApiResult<Json<bool>> {
+    let deleted = blocking(&s.local.lib, move |l| l.delete_snippet(&id)).await?;
+    if deleted {
+        s.local.emit(DaiEvent::SnippetsChanged);
+    }
+    Ok(Json(deleted))
 }
 
 async fn shutdown_handler(State(s): State<AppState>) -> StatusCode {

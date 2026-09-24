@@ -34,6 +34,24 @@ export type Hit = {
 
 export type Page = { docset: string; path: string };
 
+export type Snippet = {
+  /** File stem in the snippets folder. */
+  id: string;
+  title: string;
+  language: string;
+  tags: string[];
+  description: string;
+  code: string;
+  notes: string;
+  created: string;
+  updated: string;
+};
+
+export type SnippetInput = Pick<
+  Snippet,
+  "title" | "language" | "tags" | "description" | "code" | "notes"
+>;
+
 /** Emitted by the Rust side as `dai-event` (mirrors `DaiEvent` in the daemon). */
 export type DaiEvent =
   | { type: "install_started"; id: string }
@@ -46,6 +64,7 @@ export type DaiEvent =
     }
   | { type: "install_finished"; id: string; error: string | null }
   | { type: "removed"; id: string }
+  | { type: "snippets_changed" }
   | ({ type: "open" } & Page);
 
 export const DAI_EVENT = "dai-event";
@@ -60,4 +79,11 @@ export const api = {
   search: (query: string, docsets: string[], limit = 50) =>
     invoke<Hit[]>("search", { query, docsets, limit }),
   initialOpen: () => invoke<Page | null>("initial_open"),
+  snippets: (query: string, language?: string, tag?: string) =>
+    invoke<Snippet[]>("snippets", { query, language, tag }),
+  snippet: (id: string) => invoke<Snippet | null>("snippet", { id }),
+  createSnippet: (input: SnippetInput) => invoke<Snippet>("create_snippet", { input }),
+  updateSnippet: (id: string, input: SnippetInput) =>
+    invoke<Snippet>("update_snippet", { id, input }),
+  deleteSnippet: (id: string) => invoke<boolean>("delete_snippet", { id }),
 };

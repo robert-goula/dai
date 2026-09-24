@@ -44,6 +44,10 @@ export function useDaiEvents(onOpen: (page: Page) => void): InstallState {
         case "removed":
           invalidate();
           break;
+        case "snippets_changed":
+          void queryClient.invalidateQueries({ queryKey: ["snippets"] });
+          void queryClient.invalidateQueries({ queryKey: ["snippet"] });
+          break;
       }
     });
     function invalidate() {

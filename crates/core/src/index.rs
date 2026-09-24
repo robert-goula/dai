@@ -42,12 +42,23 @@ pub enum IndexDoc<'a> {
         heading: &'a str,
         body: &'a str,
     },
+    /// A code snippet. Searchable by title, tags, and text.
+    Snippet {
+        id: &'a str,
+        title: &'a str,
+        language: &'a str,
+        tags: &'a str,
+        text: &'a str,
+    },
 }
+
+/// Pseudo-docset that holds snippets. Doc searches skip it unless it's asked for.
+pub const SNIPPETS_DOCSET: &str = "snippets";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Hit {
     pub docset: String,
-    /// `entry` or `chunk`.
+    /// `entry`, `chunk`, or `snippet`.
     pub kind: String,
     /// Entry name, or the page title for chunks.
     pub name: String,
@@ -104,6 +115,17 @@ impl Index {
                 } => doc!(
                     f.docset => docset, f.kind => "chunk", f.path => path,
                     f.title => title, f.heading => heading, f.body => body,
+                ),
+                IndexDoc::Snippet {
+                    id,
+                    title,
+                    language,
+                    tags,
+                    text,
+                } => doc!(
+                    f.docset => docset, f.kind => "snippet", f.name => title,
+                    f.name_exact => title.to_lowercase(), f.entry_type => language,
+                    f.path => id, f.heading => tags, f.body => text,
                 ),
             };
             writer.add_document(doc)?;
@@ -185,6 +207,15 @@ impl Index {
             q = Box::new(BooleanQuery::new(vec![
                 (Occur::Must, q),
                 (Occur::Must, Box::new(BooleanQuery::new(filter))),
+            ]));
+        } else {
+            let snippets: Box<dyn Query> = Box::new(TermQuery::new(
+                Term::from_field_text(f.docset, SNIPPETS_DOCSET),
+                IndexRecordOption::Basic,
+            ));
+            q = Box::new(BooleanQuery::new(vec![
+                (Occur::Must, q),
+                (Occur::MustNot, snippets),
             ]));
         }
 

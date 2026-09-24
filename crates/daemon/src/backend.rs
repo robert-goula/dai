@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context, Result};
 use dai_core::index::Hit;
+use dai_core::snippets::{Snippet, SnippetInput};
 use dai_core::store::Docset;
 use dai_core::{DocPage, Library};
 use tokio::sync::broadcast;
@@ -116,6 +117,45 @@ impl Backend {
                 .await
             }
             Self::Remote(c) => c.get_doc(&docset, &path, offset, max_chars).await,
+        }
+    }
+
+    pub async fn snippets(
+        &self,
+        query: String,
+        language: Option<String>,
+        tag: Option<String>,
+        limit: usize,
+    ) -> Result<Vec<Snippet>> {
+        match self {
+            Self::Local(l) => {
+                blocking(&l.lib, move |l| {
+                    l.snippets(&query, language.as_deref(), tag.as_deref(), limit)
+                })
+                .await
+            }
+            Self::Remote(c) => {
+                c.snippets(&query, language.as_deref(), tag.as_deref(), limit)
+                    .await
+            }
+        }
+    }
+
+    pub async fn snippet(&self, id: String) -> Result<Option<Snippet>> {
+        match self {
+            Self::Local(l) => Ok(l.lib.snippet(&id)),
+            Self::Remote(c) => c.snippet(&id).await,
+        }
+    }
+
+    pub async fn create_snippet(&self, input: SnippetInput) -> Result<Snippet> {
+        match self {
+            Self::Local(l) => {
+                let s = blocking(&l.lib, move |l| l.create_snippet(input)).await?;
+                l.emit(DaiEvent::SnippetsChanged);
+                Ok(s)
+            }
+            Self::Remote(c) => c.create_snippet(&input).await,
         }
     }
 

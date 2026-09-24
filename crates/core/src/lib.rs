@@ -7,6 +7,7 @@ pub mod library;
 mod net;
 pub mod normalize;
 pub mod paths;
+pub mod snippets;
 pub mod store;
 
 pub use library::{CatalogEntry, DocPage, Library, Progress};

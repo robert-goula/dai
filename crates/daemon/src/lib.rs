@@ -38,6 +38,8 @@ pub enum DaiEvent {
         id: String,
         error: Option<String>,
     },
+    /// The snippets folder changed (from the API, an agent, or an outside edit).
+    SnippetsChanged,
     Removed {
         id: String,
     },

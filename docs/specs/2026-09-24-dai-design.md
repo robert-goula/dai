@@ -27,8 +27,8 @@ Classification: **architectural, new project**. `projects/daimedia/docset/` is e
 | Generation (v1) | llms.txt / llms-full.txt, source repo (README + `docs/**/*.md(x)`), Context7 snapshot (app-side) |
 | Snippets | One `.md` file per snippet, with YAML frontmatter, in a watched folder you can git-sync |
 | Versions | Manifest detection (package.json, Cargo.toml, go.mod, pyproject) in the MCP phase |
-| IDE snippets | Raycast extension, in a separate later plan. The in-app global-hotkey palette covers Linux and Windows. |
-| Agent → you | MCP tool `open_in_app` opens the app to a specific doc or snippet |
+| IDE snippets | Raycast extension, in a separate later plan. No global hotkey for now. |
+| Agent → you | MCP tool `open_in_app` opens the app to a specific doc |
 
 ## Architecture
 
@@ -73,9 +73,9 @@ app ──────▶ │ event stream /api/events (SSE) ← open_in_app, up
 - `list_docsets`: installed docsets with versions.
 - `search_docs(query, docsets?, version?, project_path?, limit)`: chunk hits with source path/URL.
 - `get_doc(docset, path, anchor?)`: full markdown for one entry, with a size limit and pagination.
-- `search_snippets(query, language?, tags?)` / `get_snippet(id)`.
+- `search_snippets(query?, language?, tag?)` (returns code inline) / `get_snippet(id)` / `save_snippet(title, code, language, …)`. Saving only creates new files; it never overwrites.
 - `resolve_project_versions(project_path)`: maps a project's dependencies to installed docset versions (Phase 6).
-- `open_in_app(docset, path, anchor?)` / `open_in_app(snippet_id)`: the daemon emits an SSE event, and the app focuses and navigates. If the app isn't running, the daemon launches it via the `dai://open?...` deep link (Tauri deep-link plugin). The tool description says to use it only when the user asks to see something.
+- `open_in_app(docset, path)`: the daemon emits an SSE event, and the app focuses and navigates. If the app isn't running, the daemon launches it via the `dai://open?...` deep link (Tauri deep-link plugin). The tool description says to use it only when the user asks to see something.
 - Context7 is **not** exposed over MCP (agents have their own Context7 MCP).
 
 ### Desktop app (Tauri + React)
@@ -83,7 +83,7 @@ app ──────▶ │ event stream /api/events (SSE) ← open_in_app, up
 - Search-first UI: a type-ahead box, a results list filtered by docset, a doc viewer, and a table of contents (TOC deferred past Phase 2).
 - Doc viewer: an iframe of the daemon's `/content/<docset>/<path>` for sources that have HTML, sandboxed and allow-listed in the CSP. A markdown renderer (react-markdown + remark-gfm + our MDX shim) for generated and markdown docsets and snippets.
 - Docset manager: browse the catalog (DevDocs + Dash, filterable by source), install, remove, update, and "update all". It shows stale/outdated state and progress over SSE.
-- Snippets: list, edit, tag, and copy. The global-hotkey quick palette uses the Tauri global-shortcut plugin.
+- Snippets: list, search, filter by language, edit, tag, copy code, delete.
 - "Not found locally" → a **Context7** panel: query Context7 using the API key from settings, then optionally "Save as docset" (a snapshot saved as a markdown docset).
 - Deep-link handler for `dai://open`, plus a listener for SSE `open` events.
 
@@ -98,7 +98,7 @@ Re-running a generator counts as an "update". The manager shows `generated_at` s
 
 ### Snippets
 
-`<snippets dir>/<slug>.md`, with frontmatter `{title, language, tags, description, created, updated}` and the body in a fenced block plus optional notes. A file watcher (`notify`) reindexes on change. The folder location is configurable so you can point it at a git repo.
+`<snippets dir>/<slug>.md`, with frontmatter `{title, language, tags, description, created, updated}` and the code in the first fenced block, plus optional notes. The folder is `$DAI_SNIPPETS_DIR`, else `snippets_dir` in `~/.config/dai/config.toml`, else `~/.config/dai/snippets`. A file watcher (`notify`) reloads and reindexes on change. Files without valid frontmatter still load, using the file name as the title. Snippets live in the search index under the `snippets` pseudo-docset, and doc searches skip it.
 
 ## Phases (each gets review + commit before the next)
 
@@ -106,7 +106,7 @@ Re-running a generator counts as an "update". The manager shows `generated_at` s
 1. **Core + daemon + MCP (DevDocs only).** Catalog fetch, install/update of DevDocs docsets, normalize, index, search, CLI commands, the `serve` HTTP API, MCP `list_docsets`/`search_docs`/`get_doc` over stdio and HTTP. *Done when Claude Code can answer from local React/Rust docs through `dai mcp`.*
 2. **Desktop app v1.** Search, viewer, docset manager, SSE progress, auto-starting the daemon, `open_in_app` + deep link.
 3. **Dash/Zeal docsets.** Zeal catalog, streamed `.tgz` install with progress events, dsidx import, the same normalize/index pipeline.
-4. **Snippets.** Store, watcher, index, MCP snippet tools, app editor, hotkey palette.
+4. **Snippets.** Store, watcher, index, MCP snippet tools (incl. `save_snippet`), CLI, app editor.
 5. **Generation + Context7.** Markdown docset format, the llms.txt and repo generators, the app's Context7 panel and snapshot-to-docset.
 6. **Version awareness.** Manifest parsers, `resolve_project_versions`, `project_path` on `search_docs`, side-by-side installs of multiple versions.
 
@@ -117,7 +117,7 @@ Separate later plans: **Raycast extension** (a thin client over `/api`), **hybri
 - **Dash HTML is noisy.** Markdown extraction quality varies by docset. The per-source stripping rules will need tuning, and the viewer falls back to the raw HTML.
 - **Index size.** Installing many docsets could push the index into the GBs. Only the markdown is indexed, and the full HTML stays on disk.
 - **Licensing.** DevDocs and Dash content is fine for local personal use. We don't build any redistribution or sharing of downloaded content.
-- **Raycast** is Mac-first, so Linux users depend on the in-app palette.
+- **Raycast** is Mac-first, so Linux users only get snippets in the app and CLI (`dai snippet show <id> --code`).
 - **Context7** needs an API key and network access. It's app-only and optional.
 
 ## Verification

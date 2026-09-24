@@ -9,6 +9,7 @@ anyhow = "1.0.104"
 axum = "0.8.9"
 dai-core = { version = "0.1.0", path = "../core" }
 mime_guess = "2.0.5"
+notify-debouncer-mini = "0.7.0"
 reqwest = { version = "0.13.5", features = ["json", "query", "stream"] }
 rmcp = { version = "3.4.1", features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }
 schemars = "1.2.2"

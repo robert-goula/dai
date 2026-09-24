@@ -8,6 +8,7 @@ use anyhow::{Context, Result, bail};
 use dai_core::CatalogEntry;
 use dai_core::DocPage;
 use dai_core::index::Hit;
+use dai_core::snippets::{Snippet, SnippetInput};
 use dai_core::store::Docset;
 use reqwest::{Method, RequestBuilder, StatusCode};
 use serde::de::DeserializeOwned;
@@ -139,6 +140,46 @@ impl Client {
             return Ok(None);
         }
         Ok(Some(decode(res).await?))
+    }
+
+    pub async fn snippets(
+        &self,
+        query: &str,
+        language: Option<&str>,
+        tag: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<Snippet>> {
+        let mut params = vec![("q", query.to_string()), ("limit", limit.to_string())];
+        params.extend(language.map(|l| ("language", l.to_string())));
+        params.extend(tag.map(|t| ("tag", t.to_string())));
+        send(self.req(Method::GET, "/api/snippets").query(&params)).await
+    }
+
+    pub async fn snippet(&self, id: &str) -> Result<Option<Snippet>> {
+        let res = self
+            .req(Method::GET, &format!("/api/snippets/{id}"))
+            .send()
+            .await?;
+        if res.status() == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        Ok(Some(decode(res).await?))
+    }
+
+    pub async fn create_snippet(&self, input: &SnippetInput) -> Result<Snippet> {
+        send(self.req(Method::POST, "/api/snippets").json(input)).await
+    }
+
+    pub async fn update_snippet(&self, id: &str, input: &SnippetInput) -> Result<Snippet> {
+        send(
+            self.req(Method::PUT, &format!("/api/snippets/{id}"))
+                .json(input),
+        )
+        .await
+    }
+
+    pub async fn delete_snippet(&self, id: &str) -> Result<bool> {
+        send(self.req(Method::DELETE, &format!("/api/snippets/{id}"))).await
     }
 
     pub async fn open(&self, docset: &str, path: &str) -> Result<OpenOutcome> {

@@ -42,3 +42,11 @@
   padding: 24px;
   color: var(--danger);
 }
+
+.pane {
+  height: 100%;
+
+  &[hidden] {
+    display: none;
+  }
+}

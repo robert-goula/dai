@@ -9,6 +9,8 @@ use rmcp::{ErrorData, ServerHandler, tool, tool_handler, tool_router};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
+use dai_core::snippets::SnippetInput;
+
 use crate::backend::{Backend, OpenOutcome};
 
 const MAX_LIMIT: usize = 50;
@@ -179,6 +181,128 @@ impl DaiMcp {
             Err(e) => tool_error(e),
         })
     }
+
+    #[tool(
+        description = "Search the user's saved code snippets (their preferred patterns and \
+                          reference code). Returns matching snippets with their code. An empty \
+                          query lists the most recently updated."
+    )]
+    async fn search_snippets(
+        &self,
+        Parameters(args): Parameters<SnippetSearchArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let limit = args.limit.unwrap_or(5).clamp(1, MAX_LIMIT);
+        let query = args.query.unwrap_or_default();
+        let found = match self
+            .backend
+            .snippets(query.clone(), args.language, args.tag, limit)
+            .await
+        {
+            Ok(s) => s,
+            Err(e) => return Ok(tool_error(e)),
+        };
+        if found.is_empty() {
+            return Ok(text(format!("No snippets match `{query}`.")));
+        }
+        let mut out = String::new();
+        for s in found {
+            let _ = writeln!(out, "## {} (id: {})", s.title, s.id);
+            let mut meta = vec![];
+            if !s.language.is_empty() {
+                meta.push(format!("language: {}", s.language));
+            }
+            if !s.tags.is_empty() {
+                meta.push(format!("tags: {}", s.tags.join(", ")));
+            }
+            if !meta.is_empty() {
+                let _ = writeln!(out, "{}", meta.join(" | "));
+            }
+            if !s.description.is_empty() {
+                let _ = writeln!(out, "{}", s.description);
+            }
+            let code: String = s.code.chars().take(SNIPPET_PREVIEW_CHARS).collect();
+            let more = if code.len() < s.code.len() {
+                "\n… (truncated; use get_snippet)"
+            } else {
+                ""
+            };
+            let _ = writeln!(out, "```{}\n{code}\n```{more}\n", s.language);
+        }
+        Ok(text(out))
+    }
+
+    #[tool(description = "Read one saved snippet in full (code and notes) by id.")]
+    async fn get_snippet(
+        &self,
+        Parameters(args): Parameters<SnippetIdArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        Ok(match self.backend.snippet(args.id.clone()).await {
+            Ok(Some(s)) => text(dai_core::snippets::render(&s)),
+            Ok(None) => tool_error(format!("no snippet `{}`", args.id)),
+            Err(e) => tool_error(e),
+        })
+    }
+
+    #[tool(
+        description = "Save a new code snippet to the user's snippet library. Only use this \
+                          when the user asks to save or remember a snippet. Never overwrites an \
+                          existing snippet."
+    )]
+    async fn save_snippet(
+        &self,
+        Parameters(args): Parameters<SaveSnippetArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let input = SnippetInput {
+            title: args.title,
+            language: args.language,
+            tags: args.tags,
+            description: args.description,
+            code: args.code,
+            notes: args.notes,
+        };
+        Ok(match self.backend.create_snippet(input).await {
+            Ok(s) => text(format!("Saved snippet `{}` ({}.md).", s.title, s.id)),
+            Err(e) => tool_error(e),
+        })
+    }
+}
+
+const SNIPPET_PREVIEW_CHARS: usize = 1500;
+
+#[derive(Deserialize, JsonSchema)]
+pub struct SnippetSearchArgs {
+    /// Keywords matched against title, tags, description, and code. Omit to list recent ones.
+    query: Option<String>,
+    /// Only snippets in this language (e.g. `rust`, `tsx`).
+    language: Option<String>,
+    /// Only snippets with this tag.
+    tag: Option<String>,
+    /// Max results (default 5).
+    limit: Option<usize>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct SnippetIdArgs {
+    /// Snippet id from search_snippets.
+    id: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct SaveSnippetArgs {
+    /// Short descriptive title; also becomes the file name.
+    title: String,
+    /// The code itself, without markdown fences.
+    code: String,
+    /// Language for highlighting, e.g. `rust`, `typescript`, `bash`.
+    language: String,
+    /// One-line summary of what it does and when to use it.
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    tags: Vec<String>,
+    /// Optional markdown notes (caveats, links).
+    #[serde(default)]
+    notes: String,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -194,7 +318,9 @@ pub struct OpenArgs {
     instructions = "Local, offline documentation for installed docsets (languages, \
 frameworks, libraries). Use search_docs with a symbol (e.g. `useEffect`, `Vec::push`) or a few \
 keywords, then get_doc with a hit's docset and path to read the page as markdown. Use \
-list_docsets to see what's installed; for anything not installed, use other sources."
+list_docsets to see what's installed; for anything not installed, use other sources. \
+The user also keeps reference code snippets: check search_snippets for their preferred patterns \
+before writing common code."
 )]
 impl ServerHandler for DaiMcp {}
 

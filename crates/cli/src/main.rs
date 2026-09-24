@@ -63,6 +63,27 @@ enum Command {
         #[arg(long)]
         max_chars: Option<usize>,
     },
+    /// Work with saved code snippets.
+    #[command(subcommand)]
+    Snippet(SnippetCommand),
+}
+
+#[derive(Subcommand)]
+enum SnippetCommand {
+    /// List snippets, or search them when a query is given.
+    List {
+        query: Vec<String>,
+        #[arg(short, long)]
+        language: Option<String>,
+        #[arg(short, long)]
+        tag: Option<String>,
+    },
+    /// Print a snippet (use --code to print just the code, e.g. for piping).
+    Show {
+        id: String,
+        #[arg(long)]
+        code: bool,
+    },
 }
 
 #[tokio::main]
@@ -186,6 +207,31 @@ async fn main() -> Result<()> {
                 }
             }
             None => anyhow::bail!("no page `{path}` in `{docset}`"),
+        },
+        (
+            Command::Snippet(SnippetCommand::List {
+                query,
+                language,
+                tag,
+            }),
+            c,
+        ) => {
+            let found = c
+                .snippets(&query.join(" "), language.as_deref(), tag.as_deref(), 200)
+                .await?;
+            for s in found {
+                let tags = if s.tags.is_empty() {
+                    String::new()
+                } else {
+                    format!("#{}", s.tags.join(" #"))
+                };
+                println!("{:<36} {:<12} {:<40} {tags}", s.id, s.language, s.title);
+            }
+        }
+        (Command::Snippet(SnippetCommand::Show { id, code }), c) => match c.snippet(&id).await? {
+            Some(s) if code => println!("{}", s.code),
+            Some(s) => print!("{}", dai_core::snippets::render(&s)),
+            None => anyhow::bail!("no snippet `{id}`"),
         },
         (Command::Serve { .. } | Command::Mcp | Command::Stop, _) => unreachable!(),
     }
