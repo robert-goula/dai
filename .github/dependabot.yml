@@ -1,0 +1,13 @@
+version: 2
+updates:
+  # Keeps the SHA pins in .github/workflows current (and their version comments).
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    # Let a new release age before proposing it, so a hijacked release has time to be caught.
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
