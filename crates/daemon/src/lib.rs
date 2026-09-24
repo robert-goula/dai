@@ -4,6 +4,7 @@ pub mod backend;
 pub mod client;
 pub mod mcp;
 pub mod server;
+mod viewer;
 
 use std::path::{Path, PathBuf};
 
@@ -17,6 +18,27 @@ pub const DEFAULT_PORT: u16 = 4747;
 pub struct DaemonInfo {
     pub port: u16,
     pub pid: u32,
+}
+
+/// Pushed to subscribers of `/api/events` (the desktop app).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum DaiEvent {
+    InstallStarted {
+        id: String,
+    },
+    InstallFinished {
+        id: String,
+        error: Option<String>,
+    },
+    Removed {
+        id: String,
+    },
+    /// An agent asked to show a page to the user.
+    Open {
+        docset: String,
+        path: String,
+    },
 }
 
 /// `$DAI_PORT` if set, else the running daemon's port, else the default.

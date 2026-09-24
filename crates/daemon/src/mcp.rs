@@ -9,7 +9,7 @@ use rmcp::{ErrorData, ServerHandler, tool, tool_handler, tool_router};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::backend::Backend;
+use crate::backend::{Backend, OpenOutcome};
 
 const MAX_LIMIT: usize = 50;
 
@@ -156,6 +156,32 @@ impl DaiMcp {
         out.push_str(&page.markdown);
         Ok(text(out))
     }
+
+    #[tool(
+        description = "Show a documentation page to the user in the DAI desktop app. Only use \
+                          this when the user asks to see or open docs; it takes over their screen."
+    )]
+    async fn open_in_app(
+        &self,
+        Parameters(args): Parameters<OpenArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        Ok(match self.backend.open(args.docset, args.path).await {
+            Ok(OpenOutcome::Shown) => text("Opened in the DAI app."),
+            Ok(OpenOutcome::Launched) => text(
+                "The DAI app wasn't running; asked the OS to launch it at that page. \
+                 If nothing appears, the app isn't installed.",
+            ),
+            Err(e) => tool_error(e),
+        })
+    }
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct OpenArgs {
+    /// Docset id from a search hit.
+    docset: String,
+    /// Page path from a search hit (a `#anchor` suffix scrolls to that section).
+    path: String,
 }
 
 #[tool_handler(

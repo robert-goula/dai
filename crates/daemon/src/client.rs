@@ -11,7 +11,10 @@ use dai_core::index::Hit;
 use dai_core::store::Docset;
 use reqwest::{Method, RequestBuilder, StatusCode};
 use serde::de::DeserializeOwned;
+use tokio_stream::StreamExt;
 
+use crate::DaiEvent;
+use crate::backend::OpenOutcome;
 use crate::server::Health;
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
@@ -53,6 +56,11 @@ impl Client {
             token: crate::token(home)?,
             http: reqwest::Client::new(),
         })
+    }
+
+    /// e.g. `http://127.0.0.1:4747`
+    pub fn base(&self) -> &str {
+        &self.base
     }
 
     async fn healthy(&self) -> bool {
@@ -131,6 +139,40 @@ impl Client {
             return Ok(None);
         }
         Ok(Some(decode(res).await?))
+    }
+
+    pub async fn open(&self, docset: &str, path: &str) -> Result<OpenOutcome> {
+        let body = serde_json::json!({ "docset": docset, "path": path });
+        send(self.req(Method::POST, "/api/open").json(&body)).await
+    }
+
+    /// Calls `on_event` for each daemon event until the stream ends. `app`
+    /// marks this subscriber as a desktop app window (see `open`).
+    pub async fn subscribe(&self, app: bool, mut on_event: impl FnMut(DaiEvent)) -> Result<()> {
+        let res = self
+            .req(Method::GET, "/api/events")
+            .query(&[("app", app)])
+            .send()
+            .await?
+            .error_for_status()?;
+        let mut stream = res.bytes_stream();
+        let mut buf = String::new();
+        while let Some(chunk) = stream.next().await {
+            buf.push_str(&String::from_utf8_lossy(&chunk?));
+            // SSE events end with a blank line; `data:` lines carry the JSON.
+            while let Some(end) = buf.find("\n\n") {
+                let block: String = buf.drain(..end + 2).collect();
+                let data: String = block
+                    .lines()
+                    .filter_map(|l| l.strip_prefix("data:"))
+                    .map(str::trim_start)
+                    .collect();
+                if let Ok(event) = serde_json::from_str(&data) {
+                    on_event(event);
+                }
+            }
+        }
+        Ok(())
     }
 
     pub async fn shutdown(&self) -> Result<()> {

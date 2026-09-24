@@ -173,6 +173,11 @@ impl Library {
         self.index.search(query, docsets, limit)
     }
 
+    /// A page's original HTML, for the app's viewer.
+    pub fn page_html(&self, docset: &str, path: &str) -> Result<Option<String>> {
+        Ok(self.store.page(docset, path)?.map(|p| p.html))
+    }
+
     /// A window of a page's markdown. `path` may carry a `#anchor`, which is ignored.
     pub fn get_doc(
         &self,

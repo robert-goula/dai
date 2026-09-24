@@ -1,24 +1,29 @@
 //! `dai serve`: HTTP API under `/api`, MCP (streamable HTTP) at `/mcp`.
 
+use std::convert::Infallible;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use anyhow::{Context, Result};
 use axum::extract::{Path as UrlPath, Query, Request, State};
 use axum::http::{StatusCode, header};
 use axum::middleware::{self, Next};
-use axum::response::{IntoResponse, Response};
+use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use dai_core::Library;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 use serde::{Deserialize, Serialize};
+use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::{Stream, StreamExt};
 use tokio_util::sync::CancellationToken;
 
-use crate::backend::{Backend, blocking};
+use crate::backend::{Backend, Local, OpenOutcome, blocking};
 use crate::mcp::DaiMcp;
-use crate::{DaemonInfo, daemon_info_path};
+use crate::{DaemonInfo, DaiEvent, daemon_info_path, viewer};
 
 #[derive(Serialize, Deserialize)]
 pub struct Health {
@@ -28,16 +33,16 @@ pub struct Health {
 
 #[derive(Clone)]
 struct AppState {
-    lib: Arc<Library>,
+    local: Arc<Local>,
     token: Arc<str>,
     shutdown: CancellationToken,
 }
 
 pub async fn serve(home: &Path, port: u16) -> Result<()> {
-    let lib = Arc::new(Library::open(home)?);
+    let local = Arc::new(Local::new(Library::open(home)?));
     let shutdown = CancellationToken::new();
     let state = AppState {
-        lib: lib.clone(),
+        local: local.clone(),
         token: crate::token(home)?.into(),
         shutdown: shutdown.clone(),
     };
@@ -45,7 +50,7 @@ pub async fn serve(home: &Path, port: u16) -> Result<()> {
     let mut mcp_config = StreamableHttpServerConfig::default();
     mcp_config.cancellation_token = shutdown.child_token();
     let mcp = StreamableHttpService::new(
-        move || Ok(DaiMcp::new(Backend::Local(lib.clone()))),
+        move || Ok(DaiMcp::new(Backend::Local(local.clone()))),
         Arc::new(LocalSessionManager::default()),
         mcp_config,
     );
@@ -57,11 +62,15 @@ pub async fn serve(home: &Path, port: u16) -> Result<()> {
         .route("/api/outdated", get(outdated))
         .route("/api/search", get(search))
         .route("/api/doc", get(get_doc))
+        .route("/api/events", get(events))
+        .route("/api/open", post(open))
         .route("/api/shutdown", post(shutdown_handler))
         .nest_service("/mcp", mcp)
         .layer(middleware::from_fn_with_state(state.clone(), auth));
     let app = Router::new()
         .route("/api/health", get(health))
+        // Unauthenticated so the viewer iframe can load it; serves public docs only.
+        .route("/content/{docset}/{*path}", get(content))
         .merge(protected)
         .with_state(state);
 
@@ -134,11 +143,13 @@ async fn catalog(
     State(s): State<AppState>,
     Query(p): Query<RefreshParams>,
 ) -> ApiResult<Json<impl Serialize>> {
-    Ok(Json(blocking(&s.lib, move |l| l.catalog(p.refresh)).await?))
+    Ok(Json(
+        blocking(&s.local.lib, move |l| l.catalog(p.refresh)).await?,
+    ))
 }
 
 async fn docsets(State(s): State<AppState>) -> ApiResult<Json<impl Serialize>> {
-    Ok(Json(blocking(&s.lib, |l| l.installed()).await?))
+    Ok(Json(blocking(&s.local.lib, |l| l.installed()).await?))
 }
 
 async fn outdated(
@@ -146,7 +157,7 @@ async fn outdated(
     Query(p): Query<RefreshParams>,
 ) -> ApiResult<Json<impl Serialize>> {
     Ok(Json(
-        blocking(&s.lib, move |l| l.outdated(p.refresh)).await?,
+        blocking(&s.local.lib, move |l| l.outdated(p.refresh)).await?,
     ))
 }
 
@@ -154,14 +165,98 @@ async fn install(
     State(s): State<AppState>,
     UrlPath(id): UrlPath<String>,
 ) -> ApiResult<Json<impl Serialize>> {
-    Ok(Json(blocking(&s.lib, move |l| l.install(&id)).await?))
+    s.local.emit(DaiEvent::InstallStarted { id: id.clone() });
+    let res = blocking(&s.local.lib, {
+        let id = id.clone();
+        move |l| l.install(&id)
+    })
+    .await;
+    s.local.emit(DaiEvent::InstallFinished {
+        id,
+        error: res.as_ref().err().map(|e| format!("{e:#}")),
+    });
+    Ok(Json(res?))
 }
 
 async fn remove(
     State(s): State<AppState>,
     UrlPath(id): UrlPath<String>,
 ) -> ApiResult<Json<impl Serialize>> {
-    Ok(Json(blocking(&s.lib, move |l| l.remove(&id)).await?))
+    let removed = blocking(&s.local.lib, {
+        let id = id.clone();
+        move |l| l.remove(&id)
+    })
+    .await?;
+    if removed {
+        s.local.emit(DaiEvent::Removed { id });
+    }
+    Ok(Json(removed))
+}
+
+#[derive(Deserialize)]
+struct EventParams {
+    /// Set by the desktop app so `open` knows whether a window is listening.
+    #[serde(default)]
+    app: bool,
+}
+
+async fn events(
+    State(s): State<AppState>,
+    Query(p): Query<EventParams>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let guard = p.app.then(|| AppClientGuard::new(s.local.clone()));
+    let stream = BroadcastStream::new(s.local.events.subscribe()).filter_map(move |e| {
+        let _alive = &guard;
+        // Lagged receivers just skip what they missed.
+        let e = e.ok()?;
+        Some(Ok(Event::default().json_data(e).expect("event serializes")))
+    });
+    Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+/// Counts an app subscriber for as long as its event stream is open.
+struct AppClientGuard(Arc<Local>);
+
+impl AppClientGuard {
+    fn new(local: Arc<Local>) -> Self {
+        local.app_clients.fetch_add(1, Ordering::SeqCst);
+        Self(local)
+    }
+}
+
+impl Drop for AppClientGuard {
+    fn drop(&mut self) {
+        self.0.app_clients.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+#[derive(Deserialize)]
+struct OpenParams {
+    docset: String,
+    path: String,
+}
+
+async fn open(
+    State(s): State<AppState>,
+    Json(p): Json<OpenParams>,
+) -> ApiResult<Json<OpenOutcome>> {
+    Ok(Json(s.local.open(p.docset, p.path)?))
+}
+
+/// A page's original HTML wrapped in the viewer shell.
+async fn content(
+    State(s): State<AppState>,
+    UrlPath((docset, path)): UrlPath<(String, String)>,
+) -> ApiResult<Response> {
+    let page = blocking(&s.local.lib, {
+        let (docset, path) = (docset.clone(), path.clone());
+        move |l| l.page_html(&docset, &path)
+    })
+    .await?;
+    let Some(html) = page else {
+        return Ok((StatusCode::NOT_FOUND, "no such page").into_response());
+    };
+    Ok(Html(viewer::wrap(&docset, &path, &html)).into_response())
 }
 
 #[derive(Deserialize)]
@@ -189,7 +284,7 @@ async fn search(
         .map(String::from)
         .collect();
     Ok(Json(
-        blocking(&s.lib, move |l| l.search(&p.q, &docsets, p.limit)).await?,
+        blocking(&s.local.lib, move |l| l.search(&p.q, &docsets, p.limit)).await?,
     ))
 }
 
@@ -203,7 +298,7 @@ struct DocParams {
 }
 
 async fn get_doc(State(s): State<AppState>, Query(p): Query<DocParams>) -> ApiResult<Response> {
-    let page = blocking(&s.lib, move |l| {
+    let page = blocking(&s.local.lib, move |l| {
         l.get_doc(&p.docset, &p.path, p.offset, p.max_chars)
     })
     .await?;

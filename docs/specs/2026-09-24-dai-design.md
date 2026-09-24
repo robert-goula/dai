@@ -19,7 +19,7 @@ Classification: **architectural, new project**. `projects/daimedia/docset/` is e
 | Area | Decision |
 |---|---|
 | Language | Rust (cargo workspace) |
-| Desktop | Tauri 2 + React/TS (pnpm, oxc for lint/format, vitest) |
+| Desktop | Tauri 2 + React/TS (bun, oxc for lint/format, vitest) |
 | Sources | DevDocs (primary) + Dash/Zeal feeds (Kapeli + user-contributed) |
 | Canonical text | **Markdown.** Every source gets normalized into heading-chunked markdown for search and MCP. The original HTML is kept for viewing in the app. |
 | MDX | Read as markdown: strip `import`/`export`, render unknown JSX as its children, map a few common components (Tabs, Callout/Admonition, CodeGroup). No runtime MDX compile or eval. |
@@ -44,7 +44,7 @@ app ──────▶ │ event stream /api/events (SSE) ← open_in_app, up
 
 - **One binary, `dai`**, with subcommands: `serve` (the daemon), `mcp` (stdio shim), `install/update/remove/list/search` (CLI). One artifact to ship per platform.
 - **The daemon is the only index writer.** The app and the CLI are thin clients over `127.0.0.1:<port>`. The port and a random auth token go in `<data dir>/daemon.json`, and every HTTP/MCP call must present the token. That stops other local web pages from hitting the API.
-- **Lifecycle:** the app and `dai mcp` both start the daemon if it isn't running (a lock file prevents duplicates). The app has an opt-in "start at login" toggle using Tauri's autostart plugin. No launchd/systemd/Windows service in v1.
+- **Lifecycle:** the app and `dai mcp` both start the daemon if it isn't running (a second daemon fails to bind the port, so duplicates cannot run). The app has an opt-in "start at login" toggle using Tauri's autostart plugin (deferred past Phase 2). No launchd/systemd/Windows service in v1.
 - **Storage:** platform dirs from the `directories` crate. `meta.db` (SQLite via rusqlite) holds docset, entry, and version metadata. Dash's `docSet.dsidx` is already SQLite, so it maps over naturally. Raw content lives on disk and the tantivy index sits beside it.
 
 ### Crates (workspace)
@@ -52,7 +52,7 @@ app ──────▶ │ event stream /api/events (SSE) ← open_in_app, up
 - `crates/core`: domain model, catalog clients, ingesters, HTML→markdown normalizer, tantivy indexing and search, snippet store, manifest/version resolver. No I/O frameworks, so it's testable in isolation.
 - `crates/daemon`: axum server, rmcp MCP server, SSE events, job queue for installs and updates.
 - `crates/cli`: the `dai` binary (clap), wiring subcommands to core and daemon.
-- `app/`: Tauri 2 shell (`app/src-tauri`) + React UI (`app/ui`).
+- `app/`: Tauri 2 shell (`app/src-tauri`) + React UI (`app/src`). The app binary doubles as the daemon (`<app> serve`) so it can start one without a separate `dai` install.
 
 ### Source formats (verified 2026-09-24)
 
@@ -80,7 +80,7 @@ app ──────▶ │ event stream /api/events (SSE) ← open_in_app, up
 
 ### Desktop app (Tauri + React)
 
-- Search-first UI: a type-ahead box, a results list filtered by docset, a doc viewer, and a table of contents.
+- Search-first UI: a type-ahead box, a results list filtered by docset, a doc viewer, and a table of contents (TOC deferred past Phase 2).
 - Doc viewer: an iframe of the daemon's `/content/<docset>/<path>` for sources that have HTML, sandboxed and allow-listed in the CSP. A markdown renderer (react-markdown + remark-gfm + our MDX shim) for generated and markdown docsets and snippets.
 - Docset manager: browse the catalog (DevDocs + Dash + user-contributed), install, remove, update, and "update all". It shows stale/outdated state and progress over SSE.
 - Snippets: list, edit, tag, and copy. The global-hotkey quick palette uses the Tauri global-shortcut plugin.
@@ -125,4 +125,4 @@ Separate later plans: **Raycast extension** (a thin client over `/api`), **hybri
 - `cargo fmt --check`, `cargo clippy -- -D warnings`, and `cargo test` on core. Unit tests use fixture DevDocs `index.json`/`db.json` and a tiny Dash docset fixture. Search-ranking tests check symbol queries.
 - Integration: start `dai serve`, install `rust` and `react` from DevDocs, then run `dai search useEffect` and time it.
 - MCP: add `dai mcp` to Claude Code (`claude mcp add dai -- dai mcp`) and check that `search_docs` and `get_doc` return markdown. Also check against the MCP Inspector over streamable HTTP.
-- App: `pnpm exec tsc --noEmit`, the oxc lint, and vitest for UI logic. A manual pass on the installed app on macOS, plus Windows and Linux via CI builds. Have an agent call `open_in_app` and confirm the app focuses on the right doc, both with the app open and with it closed.
+- App: `bun run typecheck`, the oxc lint, and vitest for UI logic. A manual pass on the installed app on macOS, plus Windows and Linux via CI builds. Have an agent call `open_in_app` and confirm the app focuses on the right doc, both with the app open and with it closed.
