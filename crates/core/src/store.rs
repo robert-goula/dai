@@ -1,6 +1,7 @@
 //! SQLite metadata and page content (`meta.db`).
 
 use std::path::Path;
+use std::sync::{Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
@@ -35,7 +36,7 @@ CREATE TABLE IF NOT EXISTS pages (
 );
 ";
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Docset {
     /// Stable id used everywhere else (the DevDocs slug, e.g. `react`, `python~3.12`).
     pub id: String,
@@ -64,18 +65,21 @@ pub struct Page {
 }
 
 pub struct Store {
-    conn: Connection,
+    conn: Mutex<Connection>,
 }
 
 impl Store {
     pub fn open(path: &Path) -> Result<Self> {
         let conn = Connection::open(path)?;
         conn.execute_batch(SCHEMA)?;
-        Ok(Self { conn })
+        Ok(Self {
+            conn: Mutex::new(conn),
+        })
     }
 
     pub fn docsets(&self) -> Result<Vec<Docset>> {
-        let mut stmt = self.conn.prepare(
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
             "SELECT id, name, source, version, release, mtime, installed_at FROM docsets ORDER BY id",
         )?;
         let rows = stmt.query_map([], row_to_docset)?;
@@ -84,7 +88,7 @@ impl Store {
 
     pub fn docset(&self, id: &str) -> Result<Option<Docset>> {
         Ok(self
-            .conn
+            .conn()
             .query_row(
                 "SELECT id, name, source, version, release, mtime, installed_at FROM docsets WHERE id = ?1",
                 [id],
@@ -94,8 +98,9 @@ impl Store {
     }
 
     /// Replaces a docset and all its entries and pages in one transaction.
-    pub fn replace_docset(&mut self, ds: &Docset, entries: &[Entry], pages: &[Page]) -> Result<()> {
-        let tx = self.conn.transaction()?;
+    pub fn replace_docset(&self, ds: &Docset, entries: &[Entry], pages: &[Page]) -> Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
         tx.execute("DELETE FROM docsets WHERE id = ?1", [&ds.id])?;
         tx.execute(
             "INSERT INTO docsets (id, name, source, version, release, mtime, installed_at)
@@ -128,16 +133,21 @@ impl Store {
         Ok(())
     }
 
-    pub fn remove_docset(&mut self, id: &str) -> Result<bool> {
+    pub fn remove_docset(&self, id: &str) -> Result<bool> {
         Ok(self
-            .conn
+            .conn()
             .execute("DELETE FROM docsets WHERE id = ?1", [id])?
             > 0)
     }
 
+    fn conn(&self) -> MutexGuard<'_, Connection> {
+        // A panic mid-transaction rolls back, so the connection is still usable.
+        self.conn.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     pub fn page(&self, docset: &str, path: &str) -> Result<Option<Page>> {
         Ok(self
-            .conn
+            .conn()
             .query_row(
                 "SELECT path, html, markdown FROM pages WHERE docset = ?1 AND path = ?2",
                 [docset, path],

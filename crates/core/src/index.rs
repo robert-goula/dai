@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use anyhow::Result;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tantivy::collector::TopDocs;
 use tantivy::query::{BooleanQuery, BoostQuery, FuzzyTermQuery, Occur, Query, TermQuery};
 use tantivy::schema::{
@@ -44,7 +44,7 @@ pub enum IndexDoc<'a> {
     },
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Hit {
     pub docset: String,
     /// `entry` or `chunk`.

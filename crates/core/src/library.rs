@@ -2,9 +2,10 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
 
 use anyhow::{Context, Result, bail};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::devdocs::{self, CatalogDoc, DocDb, DocIndex};
 use crate::index::{Hit, Index, IndexDoc};
@@ -14,7 +15,7 @@ use crate::store::{self, Docset, Page, Store};
 const CATALOG_MAX_AGE_SECS: i64 = 24 * 60 * 60;
 const DEFAULT_MAX_CHARS: usize = 20_000;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct DocPage {
     pub docset: String,
     pub path: String,
@@ -30,6 +31,8 @@ pub struct Library {
     home: PathBuf,
     store: Store,
     index: Index,
+    /// Serializes writers: tantivy allows one index writer at a time.
+    write_lock: Mutex<()>,
 }
 
 impl Library {
@@ -39,6 +42,7 @@ impl Library {
             home: home.to_path_buf(),
             store: Store::open(&home.join("meta.db"))?,
             index: Index::open(&home.join("index"))?,
+            write_lock: Mutex::new(()),
         })
     }
 
@@ -64,7 +68,7 @@ impl Library {
     }
 
     /// Downloads and indexes a DevDocs docset (also used to update one).
-    pub fn install(&mut self, slug: &str) -> Result<Docset> {
+    pub fn install(&self, slug: &str) -> Result<Docset> {
         let doc = self
             .catalog(false)?
             .into_iter()
@@ -91,12 +95,7 @@ impl Library {
     }
 
     /// Normalizes, stores, and indexes an already-downloaded DevDocs docset.
-    pub fn ingest_devdocs(
-        &mut self,
-        doc: &CatalogDoc,
-        index: DocIndex,
-        db: DocDb,
-    ) -> Result<Docset> {
+    pub fn ingest_devdocs(&self, doc: &CatalogDoc, index: DocIndex, db: DocDb) -> Result<Docset> {
         let pages = db
             .into_iter()
             .map(|(path, html)| {
@@ -153,15 +152,21 @@ impl Library {
                 body: &c.body,
             })
         });
+        let _w = self.write_lock();
         self.index
             .replace_docset(&ds.id, entries.chain(chunk_docs))?;
         self.store.replace_docset(&ds, &index.entries, &pages)?;
         Ok(ds)
     }
 
-    pub fn remove(&mut self, id: &str) -> Result<bool> {
+    pub fn remove(&self, id: &str) -> Result<bool> {
+        let _w = self.write_lock();
         self.index.remove_docset(id)?;
         self.store.remove_docset(id)
+    }
+
+    fn write_lock(&self) -> MutexGuard<'_, ()> {
+        self.write_lock.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     pub fn search(&self, query: &str, docsets: &[String], limit: usize) -> Result<Vec<Hit>> {
@@ -223,7 +228,7 @@ mod tests {
 
     fn fixture() -> (tempfile::TempDir, Library) {
         let dir = tempfile::tempdir().unwrap();
-        let mut lib = Library::open(dir.path()).unwrap();
+        let lib = Library::open(dir.path()).unwrap();
         let doc = CatalogDoc {
             name: "React".into(),
             slug: "react".into(),
@@ -272,7 +277,10 @@ mod tests {
     fn prefix_matches_for_type_ahead() {
         let (_d, lib) = fixture();
         let hits = lib.search("usest", &[], 5).unwrap();
-        assert_eq!((hits[0].name.as_str(), hits[0].kind.as_str()), ("useState", "entry"));
+        assert_eq!(
+            (hits[0].name.as_str(), hits[0].kind.as_str()),
+            ("useState", "entry")
+        );
     }
 
     #[test]
@@ -286,7 +294,7 @@ mod tests {
 
     #[test]
     fn docset_filter_and_remove() {
-        let (_d, mut lib) = fixture();
+        let (_d, lib) = fixture();
         assert!(
             lib.search("useEffect", &["vue".into()], 5)
                 .unwrap()
