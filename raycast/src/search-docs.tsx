@@ -3,14 +3,9 @@ import { Action, ActionPanel, Clipboard, Icon, List, showHUD, showToast, Toast }
 import { showFailureToast, usePromise } from "@raycast/utils";
 import { api, DaemonDownError, type Hit } from "./daemon";
 import { pageDetail } from "./lib/markdown";
-import { NotRunningView } from "./not-running";
+import { NotRunningView, onError } from "./not-running";
 
 const DETAIL_CHARS = 4000;
-
-/** Toast unless the daemon is down, which gets its own view. */
-const onError = (e: Error) => {
-  if (!(e instanceof DaemonDownError)) void showFailureToast(e, { title: "DAI error" });
-};
 
 export default function SearchDocs() {
   const [query, setQuery] = useState("");

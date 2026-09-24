@@ -67,6 +67,7 @@ pub async fn serve(home: &Path, port: u16) -> Result<()> {
     );
 
     let protected = Router::new()
+        .route("/api/info", get(info))
         .route("/api/catalog", get(catalog))
         .route("/api/docsets", get(docsets))
         .route("/api/docsets/{id}", post(install).delete(remove))
@@ -151,6 +152,20 @@ async fn health() -> Json<Health> {
     Json(Health {
         app: "dai".into(),
         version: env!("CARGO_PKG_VERSION").into(),
+    })
+}
+
+/// For clients that work with snippet files directly (the Raycast extension).
+#[derive(Serialize)]
+struct Info {
+    version: &'static str,
+    snippets_dir: PathBuf,
+}
+
+async fn info(State(s): State<AppState>) -> Json<Info> {
+    Json(Info {
+        version: env!("CARGO_PKG_VERSION"),
+        snippets_dir: s.local.lib.snippets_dir().to_path_buf(),
     })
 }
 

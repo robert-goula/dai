@@ -38,6 +38,21 @@ export type DocPage = {
   next_offset: number | null;
 };
 
+export type Snippet = {
+  /** Relative path without `.md`, e.g. `rust/retry`. */
+  id: string;
+  title: string;
+  language: string;
+  tags: string[];
+  description: string;
+  code: string;
+  notes: string;
+  created: string;
+  updated: string;
+};
+
+export type Info = { version: string; snippets_dir: string };
+
 /** The daemon isn't listening (or DAI has never run, so there's no token). */
 export class DaemonDownError extends Error {
   constructor() {
@@ -90,11 +105,16 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
+  info: () => request<Info>("/api/info"),
   docsets: (signal?: AbortSignal) => request<Docset[]>("/api/docsets", { signal }),
   search: (q: string, docsets: string[], signal?: AbortSignal) =>
     request<Hit[]>(`/api/search?${new URLSearchParams({ q, docsets: docsets.join(","), limit: "50" })}`, { signal }),
   doc: (docset: string, path: string, maxChars: number, signal?: AbortSignal) =>
     request<DocPage>(`/api/doc?${new URLSearchParams({ docset, path, max_chars: String(maxChars) })}`, { signal }),
+  snippets: (q: string, signal?: AbortSignal) =>
+    request<Snippet[]>(`/api/snippets?${new URLSearchParams({ q })}`, { signal }),
+  deleteSnippet: (id: string) =>
+    request<boolean>(`/api/snippets/${id.split("/").map(encodeURIComponent).join("/")}`, { method: "DELETE" }),
   open: (docset: string, path: string) =>
     request<"shown" | "launched">("/api/open", {
       method: "POST",

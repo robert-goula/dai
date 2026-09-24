@@ -22,3 +22,8 @@ export function parsePort(json: string | undefined): number {
     return DEFAULT_PORT;
   }
 }
+
+/** Where the daemon keeps a snippet: `<snippets dir>/<id>.md` (ids may contain folders). */
+export function snippetPath(snippetsDir: string, id: string): string {
+  return join(snippetsDir, `${id}.md`);
+}

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { DEFAULT_PORT, dataDir, parsePort } from "./discovery";
+import { DEFAULT_PORT, dataDir, parsePort, snippetPath } from "./discovery";
 
 describe("dataDir", () => {
   test("macOS default", () => {
@@ -32,4 +32,8 @@ describe("parsePort", () => {
       expect(parsePort(input)).toBe(DEFAULT_PORT);
     },
   );
+});
+
+test("snippetPath", () => {
+  expect(snippetPath("/Users/me/.config/dai/snippets", "rust/retry")).toBe("/Users/me/.config/dai/snippets/rust/retry.md");
 });

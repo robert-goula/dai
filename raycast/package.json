@@ -14,6 +14,12 @@
       "title": "Search Docs",
       "description": "Search installed docsets.",
       "mode": "view"
+    },
+    {
+      "name": "search-snippets",
+      "title": "Search Snippets",
+      "description": "Search your snippets and paste one into the frontmost app.",
+      "mode": "view"
     }
   ],
   "preferences": [

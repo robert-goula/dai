@@ -1,4 +1,11 @@
 import { Action, ActionPanel, Icon, List, open, showToast, Toast } from "@raycast/api";
+import { showFailureToast } from "@raycast/utils";
+import { DaemonDownError } from "./daemon";
+
+/** `usePromise` error handler: toast unless the daemon is down, which gets its own view. */
+export const onError = (e: Error) => {
+  if (!(e instanceof DaemonDownError)) void showFailureToast(e, { title: "DAI error" });
+};
 
 export function NotRunningView({ onRetry }: { onRetry: () => void }) {
   return (
