@@ -3,13 +3,13 @@
 version = 4
 
 [[package]]
-name = "docset"
+name = "dai"
 version = "0.1.0"
 
 [[package]]
-name = "docset-core"
+name = "dai-core"
 version = "0.1.0"
 
 [[package]]
-name = "docset-daemon"
+name = "dai-daemon"
 version = "0.1.0"
