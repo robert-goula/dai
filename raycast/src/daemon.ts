@@ -51,6 +51,8 @@ export type Snippet = {
   updated: string;
 };
 
+export type SnippetInput = Pick<Snippet, "title" | "language" | "tags" | "description" | "code" | "notes">;
+
 export type Info = { version: string; snippets_dir: string };
 
 /** The daemon isn't listening (or DAI has never run, so there's no token). */
@@ -113,6 +115,12 @@ export const api = {
     request<DocPage>(`/api/doc?${new URLSearchParams({ docset, path, max_chars: String(maxChars) })}`, { signal }),
   snippets: (q: string, signal?: AbortSignal) =>
     request<Snippet[]>(`/api/snippets?${new URLSearchParams({ q })}`, { signal }),
+  createSnippet: (input: SnippetInput) =>
+    request<Snippet>("/api/snippets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
   deleteSnippet: (id: string) =>
     request<boolean>(`/api/snippets/${id.split("/").map(encodeURIComponent).join("/")}`, { method: "DELETE" }),
   open: (docset: string, path: string) =>

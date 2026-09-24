@@ -20,6 +20,8 @@ declare namespace Preferences {
   export type SearchDocs = ExtensionPreferences & {}
   /** Preferences accessible in the `search-snippets` command */
   export type SearchSnippets = ExtensionPreferences & {}
+  /** Preferences accessible in the `save-snippet` command */
+  export type SaveSnippet = ExtensionPreferences & {}
 }
 
 declare namespace Arguments {
@@ -27,5 +29,7 @@ declare namespace Arguments {
   export type SearchDocs = {}
   /** Arguments passed to the `search-snippets` command */
   export type SearchSnippets = {}
+  /** Arguments passed to the `save-snippet` command */
+  export type SaveSnippet = {}
 }
 

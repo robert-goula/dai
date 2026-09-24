@@ -20,6 +20,12 @@
       "title": "Search Snippets",
       "description": "Search your snippets and paste one into the frontmost app.",
       "mode": "view"
+    },
+    {
+      "name": "save-snippet",
+      "title": "Save Snippet",
+      "description": "Save the selected text (or clipboard) as a snippet.",
+      "mode": "view"
     }
   ],
   "preferences": [
