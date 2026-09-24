@@ -2,7 +2,8 @@ use std::time::Instant;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use dai_core::{Library, paths};
+use dai_core::paths;
+use dai_daemon::client::Client;
 
 /// DAI (Docs AI): local documentation for you and your agents.
 #[derive(Parser)]
@@ -14,6 +15,16 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Run the daemon in the foreground (HTTP API + MCP at /mcp).
+    Serve {
+        /// Defaults to $DAI_PORT, then 4747.
+        #[arg(long)]
+        port: Option<u16>,
+    },
+    /// Run an MCP server over stdio for agents (starts the daemon if needed).
+    Mcp,
+    /// Stop the running daemon.
+    Stop,
     /// List available DevDocs docsets.
     Catalog {
         /// Only show docsets whose name or slug contains this.
@@ -54,15 +65,33 @@ enum Command {
     },
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let mut lib = Library::open(&paths::home()?)?;
+    let home = paths::home()?;
 
-    match cli.command {
-        Command::Catalog { filter, refresh } => {
+    let dai = match cli.command {
+        Command::Serve { port } => {
+            let port = port
+                .unwrap_or_else(|| dai_daemon::port_from_env().unwrap_or(dai_daemon::DEFAULT_PORT));
+            return dai_daemon::server::serve(&home, port).await;
+        }
+        Command::Mcp => return dai_daemon::mcp::serve_stdio(&home).await,
+        Command::Stop => {
+            match Client::new(&home)?.shutdown().await {
+                Ok(()) => println!("daemon stopped"),
+                Err(_) => println!("daemon is not running"),
+            }
+            return Ok(());
+        }
+        command => (command, Client::connect(&home).await?),
+    };
+
+    match dai {
+        (Command::Catalog { filter, refresh }, c) => {
             let filter = filter.map(|f| f.to_lowercase());
-            let installed: Vec<String> = lib.installed()?.into_iter().map(|d| d.id).collect();
-            for d in lib.catalog(refresh)? {
+            let installed: Vec<String> = c.docsets().await?.into_iter().map(|d| d.id).collect();
+            for d in c.catalog(refresh).await? {
                 if filter
                     .as_ref()
                     .is_some_and(|f| !d.slug.contains(f) && !d.name.to_lowercase().contains(f))
@@ -77,14 +106,14 @@ fn main() -> Result<()> {
                 println!("{mark} {:<32} {:<28} {}", d.slug, d.name, d.release);
             }
         }
-        Command::Install { slugs } => {
+        (Command::Install { slugs }, c) => {
             for slug in slugs {
-                install(&mut lib, &slug)?;
+                install(&c, &slug).await?;
             }
         }
-        Command::Update { slugs } => {
+        (Command::Update { slugs }, c) => {
             let slugs = if slugs.is_empty() {
-                lib.outdated(true)?.into_iter().map(|d| d.id).collect()
+                c.outdated(true).await?.into_iter().map(|d| d.id).collect()
             } else {
                 slugs
             };
@@ -92,31 +121,34 @@ fn main() -> Result<()> {
                 println!("everything is up to date");
             }
             for slug in slugs {
-                install(&mut lib, &slug)?;
+                install(&c, &slug).await?;
             }
         }
-        Command::Remove { ids } => {
+        (Command::Remove { ids }, c) => {
             for id in ids {
-                let removed = lib.remove(&id)?;
+                let removed = c.remove(&id).await?;
                 println!(
                     "{id}: {}",
                     if removed { "removed" } else { "not installed" }
                 );
             }
         }
-        Command::List => {
-            for d in lib.installed()? {
+        (Command::List, c) => {
+            for d in c.docsets().await? {
                 println!("{:<32} {:<28} {:<10} {}", d.id, d.name, d.version, d.source);
             }
         }
-        Command::Search {
-            query,
-            docsets,
-            limit,
-            json,
-        } => {
+        (
+            Command::Search {
+                query,
+                docsets,
+                limit,
+                json,
+            },
+            c,
+        ) => {
             let started = Instant::now();
-            let hits = lib.search(&query.join(" "), &docsets, limit)?;
+            let hits = c.search(&query.join(" "), &docsets, limit).await?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&hits)?);
                 return Ok(());
@@ -137,12 +169,15 @@ fn main() -> Result<()> {
             }
             eprintln!("{} hits in {:.1?}", hits.len(), started.elapsed());
         }
-        Command::Show {
-            docset,
-            path,
-            offset,
-            max_chars,
-        } => match lib.get_doc(&docset, &path, offset, max_chars)? {
+        (
+            Command::Show {
+                docset,
+                path,
+                offset,
+                max_chars,
+            },
+            c,
+        ) => match c.get_doc(&docset, &path, offset, max_chars).await? {
             Some(page) => {
                 println!("{}", page.markdown);
                 if let Some(next) = page.next_offset {
@@ -154,14 +189,15 @@ fn main() -> Result<()> {
             }
             None => anyhow::bail!("no page `{path}` in `{docset}`"),
         },
+        (Command::Serve { .. } | Command::Mcp | Command::Stop, _) => unreachable!(),
     }
     Ok(())
 }
 
-fn install(lib: &mut Library, slug: &str) -> Result<()> {
+async fn install(c: &Client, slug: &str) -> Result<()> {
     let started = Instant::now();
     eprintln!("installing {slug}...");
-    let ds = lib.install(slug)?;
+    let ds = c.install(slug).await?;
     println!(
         "{} {} installed in {:.1?}",
         ds.id,
