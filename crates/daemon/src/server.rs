@@ -79,7 +79,8 @@ pub async fn serve(home: &Path, port: u16) -> Result<()> {
         .route("/api/context7/docs", get(context7_docs))
         .route("/api/snippets", get(list_snippets).post(create_snippet))
         .route(
-            "/api/snippets/{id}",
+            // Wildcard: ids can include folders (`rust/retry`).
+            "/api/snippets/{*id}",
             get(get_snippet).put(update_snippet).delete(delete_snippet),
         )
         .route("/api/events", get(events))
@@ -478,7 +479,9 @@ fn watch_snippets(local: Arc<Local>) -> Result<Debouncer<RecommendedWatcher>> {
     let mut debouncer = new_debouncer(
         Duration::from_millis(300),
         move |res: DebounceEventResult| {
-            if res.is_err() {
+            // Ignore changes that aren't snippet files (e.g. inside `.git`).
+            let Ok(events) = res else { return };
+            if !events.iter().any(|e| local.lib.is_snippet_file(&e.path)) {
                 return;
             }
             let local = local.clone();
@@ -489,9 +492,7 @@ fn watch_snippets(local: Arc<Local>) -> Result<Debouncer<RecommendedWatcher>> {
             });
         },
     )?;
-    debouncer
-        .watcher()
-        .watch(&dir, RecursiveMode::NonRecursive)?;
+    debouncer.watcher().watch(&dir, RecursiveMode::Recursive)?;
     Ok(debouncer)
 }
 

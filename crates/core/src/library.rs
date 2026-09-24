@@ -608,6 +608,11 @@ impl Library {
         self.snippets.dir()
     }
 
+    /// Whether a filesystem change at `path` affects snippets.
+    pub fn is_snippet_file(&self, path: &Path) -> bool {
+        self.snippets.is_snippet_file(path)
+    }
+
     /// Snippets matching `query` (ranked), or all of them newest first when
     /// `query` is empty. `language` and `tag` filter case-insensitively.
     pub fn snippets(

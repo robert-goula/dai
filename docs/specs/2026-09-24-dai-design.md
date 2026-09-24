@@ -45,7 +45,7 @@ app ──────▶ │ event stream /api/events (SSE) ← open_in_app, up
 - **One binary, `dai`**, with subcommands: `serve` (the daemon), `mcp` (stdio shim), `install/update/remove/list/search` (CLI). One artifact to ship per platform.
 - **The daemon is the only index writer.** The app and the CLI are thin clients over `127.0.0.1:<port>`. The port and a random auth token go in `<data dir>/daemon.json`, and every HTTP/MCP call must present the token. That stops other local web pages from hitting the API.
 - **Lifecycle:** the app and `dai mcp` both start the daemon if it isn't running (a second daemon fails to bind the port, so duplicates cannot run). The app has an opt-in "start at login" toggle using Tauri's autostart plugin. It registers `<app> serve`, so only the background service starts at login, not the window. No launchd/systemd/Windows service in v1.
-- **Storage:** platform dirs from the `directories` crate. `meta.db` (SQLite via rusqlite) holds docset, entry, and version metadata. Dash's `docSet.dsidx` is already SQLite, so it maps over naturally. Raw content lives on disk and the tantivy index sits beside it.
+- **Storage:** platform dirs from the `directories` crate. `meta.db` (SQLite via rusqlite) holds docset, entry, and version metadata. Dash's `docSet.dsidx` is already SQLite, so it maps over naturally. Raw content lives on disk and the tantivy index sits beside it. Page contents in `meta.db` are zstd-compressed (level 3; older plain-text rows still read), and the database uses incremental auto-vacuum so removed or replaced docsets free their space. React + Rust + Python dropped from 185MB to 48MB.
 
 ### Crates (workspace)
 
@@ -60,7 +60,7 @@ app ──────▶ │ event stream /api/events (SSE) ← open_in_app, up
 - DevDocs per-doc: `https://documents.devdocs.io/<slug>/index.json` → `{entries:[{name,path,type}], types:[…]}`, and `db.json` → `{path: html}`. We update when `mtime` changes.
 - Zeal catalog: `https://api.zealdocs.org/v1/docsets` has 981 Dash docsets (Kapeli official, `_Contrib` user-contributed, `_Cheatsheet`) in one list: `{name, title, versions[] (newest first; may contain nulls), size}`. It replaces reading the Kapeli XML feeds and user-contributed index separately.
 - Dash download: `https://go.zealdocs.org/d/com.kapeli/<name>/latest` (or `/<version>`) redirects to the `.tgz`. Sizes go up to 3.3GB, so downloads stream to disk.
-- Inside a Dash docset: `Contents/Resources/docSet.dsidx` has the `searchIndex(name, type, path)` table, plus `Documents/`. Paths may carry `#//dash_ref…` anchors (already percent-encoded). Extracted docsets live under `<data dir>/docsets/dash/<name>/` and the viewer serves them from disk; only the markdown goes into `meta.db`. Markdown comes from each page's `<article>`/`<main>`, falling back to `<body>`.
+- Inside a Dash docset: `Contents/Resources/docSet.dsidx` has the `searchIndex(name, type, path)` table (or, for Apple-style docsets, Core Data `ZTOKEN` tables, read with Zeal's joins and Apple type codes mapped to names), plus `Documents/`. Paths may carry `#//dash_ref…` anchors (already percent-encoded). Extracted docsets live under `<data dir>/docsets/dash/<name>/` and the viewer serves them from disk; only the markdown goes into `meta.db`. Markdown comes from each page's `<article>`/`<main>`, falling back to `<body>`.
 
 ### Normalization and indexing
 
@@ -99,7 +99,7 @@ Re-running a generator counts as an "update" (`dai update md:<slug>`, or Regener
 
 ### Snippets
 
-`<snippets dir>/<slug>.md`, with frontmatter `{title, language, tags, description, created, updated}` and the code in the first fenced block, plus optional notes. The folder is `$DAI_SNIPPETS_DIR`, else `snippets_dir` in `~/.config/dai/config.toml`, else `~/.config/dai/snippets`. A file watcher (`notify`) reloads and reindexes on change. Files without valid frontmatter still load, using the file name as the title. Snippets live in the search index under the `snippets` pseudo-docset, and doc searches skip it.
+`<snippets dir>/**/<slug>.md`, with frontmatter `{title, language, tags, description, created, updated}` and the code in the first fenced block, plus optional notes. The folder is `$DAI_SNIPPETS_DIR`, else `snippets_dir` in `~/.config/dai/config.toml`, else `~/.config/dai/snippets`. A file watcher (`notify`) reloads and reindexes on change. Files without valid frontmatter still load, using the file name as the title. Snippets live in the search index under the `snippets` pseudo-docset, and doc searches skip it. Subfolders are read recursively (ids like `rust/retry`), hidden folders such as `.git` are skipped by both the loader and the watcher, and new snippets are created at the top level.
 
 ## Phases (each gets review + commit before the next)
 
@@ -116,7 +116,7 @@ Separate later plans: **Raycast extension** (a thin client over `/api`), **hybri
 ## Risks and trade-offs
 
 - **Dash HTML is noisy.** Markdown extraction quality varies by docset. The per-source stripping rules will need tuning, and the viewer falls back to the raw HTML.
-- **Index size.** Installing many docsets could push the index into the GBs. Only the markdown is indexed, and the full HTML stays on disk.
+- **Index size.** Installing many docsets could push the index into the GBs. Only the markdown is indexed, stored pages are compressed, and Dash HTML stays on disk.
 - **Licensing.** DevDocs and Dash content is fine for local personal use. We don't build any redistribution or sharing of downloaded content.
 - **Raycast** is Mac-first, so Linux users only get snippets in the app and CLI (`dai snippet show <id> --code`).
 - **Context7** needs an API key and network access. It's app-only and optional.

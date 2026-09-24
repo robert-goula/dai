@@ -146,30 +146,77 @@ pub fn documents_dir(docset_dir: &Path) -> PathBuf {
     docset_dir.join("Contents/Resources/Documents")
 }
 
-/// Entries from the docset's `searchIndex` table.
+/// Entries from the docset's index: the Dash `searchIndex` table, or the
+/// Core Data tables (`ZTOKEN`, …) that Apple-style docsets use.
 pub fn read_index(docset_dir: &Path) -> Result<Vec<Entry>> {
     let path = docset_dir.join("Contents/Resources/docSet.dsidx");
     let conn =
         rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
             .with_context(|| format!("opening {}", path.display()))?;
-    let has_search_index: bool = conn.query_row(
-        "SELECT count(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = 'searchIndex'",
-        [],
-        |r| r.get(0),
-    )?;
-    if !has_search_index {
-        // Apple-style (Core Data) indexes aren't supported yet.
-        bail!("unsupported docset index format (no searchIndex table)");
+    let has_table = |name: &str| -> rusqlite::Result<bool> {
+        conn.query_row(
+            "SELECT count(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            [name],
+            |r| r.get(0),
+        )
+    };
+    if has_table("searchIndex")? {
+        let mut stmt = conn.prepare("SELECT name, type, path FROM searchIndex")?;
+        let rows = stmt.query_map([], |r| {
+            Ok(Entry {
+                name: r.get(0)?,
+                kind: r.get(1)?,
+                path: r.get(2)?,
+            })
+        })?;
+        return Ok(rows.collect::<rusqlite::Result<_>>()?);
     }
-    let mut stmt = conn.prepare("SELECT name, type, path FROM searchIndex")?;
-    let rows = stmt.query_map([], |r| {
-        Ok(Entry {
-            name: r.get(0)?,
-            kind: r.get(1)?,
-            path: r.get(2)?,
-        })
-    })?;
-    Ok(rows.collect::<rusqlite::Result<_>>()?)
+    if has_table("ZTOKEN")? {
+        // Same joins Zeal uses for Core Data docsets.
+        let mut stmt = conn.prepare(
+            "SELECT ZTOKENNAME, ZTYPENAME, ZPATH, ZANCHOR
+             FROM ZTOKEN
+             JOIN ZTOKENMETAINFORMATION ON ZTOKEN.ZMETAINFORMATION = ZTOKENMETAINFORMATION.Z_PK
+             JOIN ZFILEPATH ON ZTOKENMETAINFORMATION.ZFILE = ZFILEPATH.Z_PK
+             JOIN ZTOKENTYPE ON ZTOKEN.ZTOKENTYPE = ZTOKENTYPE.Z_PK",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            let path: String = r.get(2)?;
+            let anchor: Option<String> = r.get(3)?;
+            Ok(Entry {
+                name: r.get(0)?,
+                kind: apple_type(&r.get::<_, String>(1)?).to_string(),
+                path: match anchor.filter(|a| !a.is_empty()) {
+                    Some(a) => format!("{path}#{a}"),
+                    None => path,
+                },
+            })
+        })?;
+        return Ok(rows.collect::<rusqlite::Result<_>>()?);
+    }
+    bail!("unsupported docset index format (neither searchIndex nor ZTOKEN tables)")
+}
+
+/// Apple's abbreviated token types, as Dash names them.
+fn apple_type(code: &str) -> &str {
+    match code {
+        "cl" | "tmplt" => "Class",
+        "intf" => "Protocol",
+        "cat" => "Category",
+        "instm" | "clm" | "intfm" | "intfcm" => "Method",
+        "instp" | "intfp" => "Property",
+        "func" | "ffunc" => "Function",
+        "macro" => "Macro",
+        "tdef" => "Type",
+        "tag" | "struct" => "Struct",
+        "econst" | "clconst" | "data" => "Constant",
+        "var" => "Variable",
+        "enum" => "Enum",
+        "union" => "Union",
+        "binding" => "Binding",
+        "specialization" => "Specialization",
+        other => other,
+    }
 }
 
 /// Resolves a page path (no fragment) under `root`, refusing anything that
@@ -288,6 +335,44 @@ mod tests {
         assert!(docset.join("Contents/a_b.html").is_file());
         assert!(!docset.join("link").exists());
         assert!(!dir.path().join("evil.txt").exists());
+    }
+
+    #[test]
+    fn reads_core_data_indexes() {
+        let dir = tempfile::tempdir().unwrap();
+        let res = dir.path().join("Contents/Resources");
+        std::fs::create_dir_all(&res).unwrap();
+        let conn = rusqlite::Connection::open(res.join("docSet.dsidx")).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE ZTOKENTYPE (Z_PK INTEGER PRIMARY KEY, ZTYPENAME TEXT);
+             CREATE TABLE ZFILEPATH (Z_PK INTEGER PRIMARY KEY, ZPATH TEXT);
+             CREATE TABLE ZTOKENMETAINFORMATION (Z_PK INTEGER PRIMARY KEY, ZFILE INTEGER, ZANCHOR TEXT);
+             CREATE TABLE ZTOKEN (Z_PK INTEGER PRIMARY KEY, ZTOKENNAME TEXT, ZTOKENTYPE INTEGER, ZMETAINFORMATION INTEGER);
+             INSERT INTO ZTOKENTYPE VALUES (1, 'cl'), (2, 'instm');
+             INSERT INTO ZFILEPATH VALUES (1, 'NSString.html');
+             INSERT INTO ZTOKENMETAINFORMATION VALUES (1, 1, NULL), (2, 1, '//apple_ref/occ/instm/NSString/length');
+             INSERT INTO ZTOKEN VALUES (1, 'NSString', 1, 1), (2, 'length', 2, 2);",
+        )
+        .unwrap();
+        drop(conn);
+
+        let mut entries: Vec<(String, String, String)> = read_index(dir.path())
+            .unwrap()
+            .into_iter()
+            .map(|e| (e.name, e.kind, e.path))
+            .collect();
+        entries.sort();
+        assert_eq!(
+            entries,
+            [
+                ("NSString".into(), "Class".into(), "NSString.html".into()),
+                (
+                    "length".into(),
+                    "Method".into(),
+                    "NSString.html#//apple_ref/occ/instm/NSString/length".into()
+                ),
+            ]
+        );
     }
 
     #[test]

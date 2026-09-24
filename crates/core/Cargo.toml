@@ -25,6 +25,7 @@ tar = "0.4.46"
 tempfile = "3.27.0"
 time = { version = "0.3.55", features = ["formatting"] }
 toml = "1.1.6"
+zstd = "0.13"
 
 [dev-dependencies]
 tempfile = "3.27.0"

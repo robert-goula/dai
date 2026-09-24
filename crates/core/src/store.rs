@@ -5,6 +5,8 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
+use rayon::prelude::*;
+use rusqlite::types::{Value, ValueRef};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
@@ -71,6 +73,13 @@ pub struct Store {
 impl Store {
     pub fn open(path: &Path) -> Result<Self> {
         let conn = Connection::open(path)?;
+        // Incremental auto-vacuum lets replaced/removed docsets give their
+        // space back. It must be set before any table exists, or be followed
+        // by a one-time VACUUM for databases created without it.
+        let mode: i64 = conn.query_row("PRAGMA auto_vacuum", [], |r| r.get(0))?;
+        if mode != 2 {
+            conn.execute_batch("PRAGMA auto_vacuum = INCREMENTAL; VACUUM;")?;
+        }
         conn.execute_batch(SCHEMA)?;
         Ok(Self {
             conn: Mutex::new(conn),
@@ -98,7 +107,13 @@ impl Store {
     }
 
     /// Replaces a docset and all its entries and pages in one transaction.
+    /// Page contents are stored zstd-compressed.
     pub fn replace_docset(&self, ds: &Docset, entries: &[Entry], pages: &[Page]) -> Result<()> {
+        // Compress up front (in parallel) so the connection isn't held meanwhile.
+        let compressed: Vec<(Value, Value)> = pages
+            .par_iter()
+            .map(|p| Ok((pack(&p.html)?, pack(&p.markdown)?)))
+            .collect::<Result<_>>()?;
         let mut conn = self.conn();
         let tx = conn.transaction()?;
         tx.execute("DELETE FROM docsets WHERE id = ?1", [&ds.id])?;
@@ -125,19 +140,20 @@ impl Store {
             let mut stmt = tx.prepare(
                 "INSERT INTO pages (docset, path, html, markdown) VALUES (?1, ?2, ?3, ?4)",
             )?;
-            for p in pages {
-                stmt.execute(params![ds.id, p.path, p.html, p.markdown])?;
+            for (p, (html, markdown)) in pages.iter().zip(compressed) {
+                stmt.execute(params![ds.id, p.path, html, markdown])?;
             }
         }
         tx.commit()?;
+        reclaim(&conn)?;
         Ok(())
     }
 
     pub fn remove_docset(&self, id: &str) -> Result<bool> {
-        Ok(self
-            .conn()
-            .execute("DELETE FROM docsets WHERE id = ?1", [id])?
-            > 0)
+        let conn = self.conn();
+        let removed = conn.execute("DELETE FROM docsets WHERE id = ?1", [id])? > 0;
+        reclaim(&conn)?;
+        Ok(removed)
     }
 
     fn conn(&self) -> MutexGuard<'_, Connection> {
@@ -154,12 +170,46 @@ impl Store {
                 |r| {
                     Ok(Page {
                         path: r.get(0)?,
-                        html: r.get(1)?,
-                        markdown: r.get(2)?,
+                        html: unpack(r.get_ref(1)?)?,
+                        markdown: unpack(r.get_ref(2)?)?,
                     })
                 },
             )
             .optional()?)
+    }
+}
+
+/// Returns free pages to the filesystem. `incremental_vacuum` frees one batch
+/// per step, so it has to be stepped to completion.
+fn reclaim(conn: &Connection) -> Result<()> {
+    let mut stmt = conn.prepare("PRAGMA incremental_vacuum")?;
+    let mut rows = stmt.query([])?;
+    while rows.next()?.is_some() {}
+    Ok(())
+}
+
+const ZSTD_LEVEL: i32 = 3;
+
+/// Page text as a zstd blob (empty text stays empty).
+fn pack(text: &str) -> Result<Value> {
+    if text.is_empty() {
+        return Ok(Value::Text(String::new()));
+    }
+    Ok(Value::Blob(zstd::encode_all(text.as_bytes(), ZSTD_LEVEL)?))
+}
+
+/// Reads page text stored either compressed (blob) or, in databases written
+/// before compression, as plain text.
+fn unpack(v: ValueRef) -> rusqlite::Result<String> {
+    let err = |e: Box<dyn std::error::Error + Send + Sync>| {
+        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Blob, e)
+    };
+    match v {
+        ValueRef::Blob(b) => {
+            let bytes = zstd::decode_all(b).map_err(|e| err(e.into()))?;
+            String::from_utf8(bytes).map_err(|e| err(e.into()))
+        }
+        other => Ok(other.as_str()?.to_string()),
     }
 }
 
@@ -179,4 +229,60 @@ pub fn now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs() as i64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pages_round_trip_compressed_and_legacy_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("meta.db")).unwrap();
+        let ds = Docset {
+            id: "x".into(),
+            name: "X".into(),
+            source: "devdocs".into(),
+            version: "1".into(),
+            release: "1".into(),
+            mtime: 0,
+            installed_at: 0,
+        };
+        let body = "# Title\n\n".to_string() + &"repetitive text ".repeat(500);
+        let page = Page {
+            path: "p".into(),
+            html: String::new(),
+            markdown: body.clone(),
+        };
+        store.replace_docset(&ds, &[], &[page]).unwrap();
+
+        let stored: Vec<u8> = store
+            .conn()
+            .query_row("SELECT markdown FROM pages WHERE path = 'p'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert!(stored.len() < body.len() / 10, "stored compressed");
+        let got = store.page("x", "p").unwrap().unwrap();
+        assert_eq!((got.html.as_str(), got.markdown), ("", body));
+
+        // Rows written before compression are plain text and still readable.
+        store
+            .conn()
+            .execute("INSERT INTO pages (docset, path, html, markdown) VALUES ('x', 'old', '<p>', 'old md')", [])
+            .unwrap();
+        let old = store.page("x", "old").unwrap().unwrap();
+        assert_eq!(
+            (old.html.as_str(), old.markdown.as_str()),
+            ("<p>", "old md")
+        );
+
+        // Removing a docset gives its pages back.
+        store.remove_docset("x").unwrap();
+        let free: i64 = store
+            .conn()
+            .query_row("PRAGMA freelist_count", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(free, 0);
+    }
 }

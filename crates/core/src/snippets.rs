@@ -212,24 +212,57 @@ impl SnippetStore {
         &self.dir
     }
 
-    /// Re-reads every `*.md` file in the folder (not recursive).
+    /// Re-reads every `*.md` file in the folder and its subfolders, skipping
+    /// hidden entries (e.g. `.git`). Ids are relative paths without `.md`,
+    /// like `rust/retry-with-backoff`.
     pub fn reload(&self) -> Result<()> {
         let mut map = BTreeMap::new();
-        for entry in std::fs::read_dir(&self.dir)? {
-            let path = entry?.path();
-            if path.extension().is_none_or(|e| e != "md") || !path.is_file() {
-                continue;
+        let mut dirs = vec![self.dir.clone()];
+        while let Some(dir) = dirs.pop() {
+            for entry in std::fs::read_dir(&dir)? {
+                let entry = entry?;
+                if entry.file_name().to_string_lossy().starts_with('.') {
+                    continue;
+                }
+                let path = entry.path();
+                if entry.file_type()?.is_dir() {
+                    dirs.push(path);
+                    continue;
+                }
+                if path.extension().is_none_or(|e| e != "md") {
+                    continue;
+                }
+                let Some(id) = self.id_for(&path) else {
+                    continue;
+                };
+                let Ok(text) = std::fs::read_to_string(&path) else {
+                    continue;
+                };
+                let snippet = parse(&id, &text);
+                map.insert(id, snippet);
             }
-            let Some(id) = path.file_stem().and_then(|s| s.to_str()) else {
-                continue;
-            };
-            let Ok(text) = std::fs::read_to_string(&path) else {
-                continue;
-            };
-            map.insert(id.to_string(), parse(id, &text));
         }
         *self.snippets.write().unwrap_or_else(|e| e.into_inner()) = map;
         Ok(())
+    }
+
+    /// `<dir>/rust/retry.md` → `rust/retry`.
+    fn id_for(&self, path: &Path) -> Option<String> {
+        let rel = path.strip_prefix(&self.dir).ok()?.with_extension("");
+        let parts: Option<Vec<&str>> = rel.components().map(|c| c.as_os_str().to_str()).collect();
+        Some(parts?.join("/"))
+    }
+
+    /// Whether a changed file should trigger a reload (a `.md` file outside
+    /// hidden folders).
+    pub fn is_snippet_file(&self, path: &Path) -> bool {
+        let Ok(rel) = path.strip_prefix(&self.dir) else {
+            return false;
+        };
+        let hidden = rel
+            .components()
+            .any(|c| c.as_os_str().to_string_lossy().starts_with('.'));
+        !hidden && (rel.extension().is_some_and(|e| e == "md") || path.is_dir() || !path.exists())
     }
 
     pub fn all(&self) -> RwLockReadGuard<'_, BTreeMap<String, Snippet>> {
@@ -383,6 +416,39 @@ mod tests {
     fn slugs() {
         assert_eq!(slugify("Debounce Hook (React)!"), "debounce-hook-react");
         assert_eq!(slugify("???"), "snippet");
+    }
+
+    #[test]
+    fn subfolders_are_read_and_hidden_ones_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("rust/async")).unwrap();
+        std::fs::create_dir_all(dir.path().join(".git")).unwrap();
+        std::fs::write(
+            dir.path().join("rust/async/retry.md"),
+            "```rust\nretry()\n```",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join(".git/HEAD.md"), "nope").unwrap();
+        std::fs::write(dir.path().join("top.md"), "```sh\nls\n```").unwrap();
+
+        let store = SnippetStore::open(dir.path()).unwrap();
+        let ids: Vec<String> = store.all().keys().cloned().collect();
+        assert_eq!(ids, ["rust/async/retry", "top"]);
+
+        let updated = store
+            .update("rust/async/retry", input("Retry", "retry2()"))
+            .unwrap();
+        assert_eq!(updated.id, "rust/async/retry");
+        assert!(
+            std::fs::read_to_string(dir.path().join("rust/async/retry.md"))
+                .unwrap()
+                .contains("retry2()")
+        );
+        assert!(store.delete("rust/async/retry").unwrap());
+        assert!(!dir.path().join("rust/async/retry.md").exists());
+
+        assert!(store.is_snippet_file(&dir.path().join("rust/new.md")));
+        assert!(!store.is_snippet_file(&dir.path().join(".git/index")));
     }
 
     #[test]

@@ -205,7 +205,7 @@ impl Client {
 
     pub async fn snippet(&self, id: &str) -> Result<Option<Snippet>> {
         let res = self
-            .req(Method::GET, &format!("/api/snippets/{id}"))
+            .req_url(Method::GET, self.snippet_url(id))
             .send()
             .await?;
         if res.status() == StatusCode::NOT_FOUND {
@@ -219,15 +219,11 @@ impl Client {
     }
 
     pub async fn update_snippet(&self, id: &str, input: &SnippetInput) -> Result<Snippet> {
-        send(
-            self.req(Method::PUT, &format!("/api/snippets/{id}"))
-                .json(input),
-        )
-        .await
+        send(self.req_url(Method::PUT, self.snippet_url(id)).json(input)).await
     }
 
     pub async fn delete_snippet(&self, id: &str) -> Result<bool> {
-        send(self.req(Method::DELETE, &format!("/api/snippets/{id}"))).await
+        send(self.req_url(Method::DELETE, self.snippet_url(id))).await
     }
 
     pub async fn open(&self, docset: &str, path: &str) -> Result<OpenOutcome> {
@@ -270,6 +266,20 @@ impl Client {
             .await?
             .error_for_status()?;
         Ok(())
+    }
+
+    /// `/api/snippets/<id>` with each folder segment of the id percent-encoded.
+    fn snippet_url(&self, id: &str) -> reqwest::Url {
+        let mut url =
+            reqwest::Url::parse(&format!("{}/api/snippets", self.base)).expect("valid base URL");
+        url.path_segments_mut()
+            .expect("http URL")
+            .extend(id.split('/'));
+        url
+    }
+
+    fn req_url(&self, method: Method, url: reqwest::Url) -> RequestBuilder {
+        self.http.request(method, url).bearer_auth(&self.token)
     }
 
     fn req(&self, method: Method, path: &str) -> RequestBuilder {
