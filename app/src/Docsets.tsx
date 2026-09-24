@@ -3,7 +3,7 @@ import { useDeferredValue, useState } from "react";
 import { api, type CatalogEntry } from "./api";
 import { AddDocs } from "./AddDocs";
 import styles from "./Docsets.module.css";
-import type { InstallState } from "./useDaiEvents";
+import { forCatalogEntry, type InstallState } from "./useDaiEvents";
 
 type Source = "" | CatalogEntry["source"];
 
@@ -51,13 +51,6 @@ export function Docsets({ installState }: { installState: InstallState }) {
           .map(([id, label]) => (
             <p key={id} className={styles.busy}>
               {id}: {label}
-            </p>
-          ))}
-        {[...errors]
-          .filter(([id]) => id.startsWith("md:") && !installedIds.has(id))
-          .map(([id, error]) => (
-            <p key={id} className={styles.error}>
-              {id}: {error}
             </p>
           ))}
       </section>
@@ -136,10 +129,12 @@ export function Docsets({ installState }: { installState: InstallState }) {
                   <span className={styles.source}>{d.source}</span> {d.id}
                   {d.version && ` · ${d.version}`} · {formatSize(d.size)}
                 </span>
-                {errors.has(d.id) && <span className={styles.error}>{errors.get(d.id)}</span>}
+                {forCatalogEntry(errors, d.id) && (
+                  <span className={styles.error}>{forCatalogEntry(errors, d.id)}</span>
+                )}
               </div>
-              {installing.has(d.id) ? (
-                <span className={styles.busy}>{installing.get(d.id)}</span>
+              {forCatalogEntry(installing, d.id) ? (
+                <span className={styles.busy}>{forCatalogEntry(installing, d.id)}</span>
               ) : (
                 <InstallButton entry={d} onInstall={(id) => install.mutate(id)} />
               )}

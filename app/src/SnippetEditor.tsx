@@ -47,6 +47,8 @@ export function SnippetEditor({ id, onSaved, onDeleted }: Props) {
   const remove = useMutation({
     mutationFn: () => api.deleteSnippet(id!),
     onSuccess: () => {
+      // Drop the cached snippet so the refresh doesn't re-request a deleted file.
+      queryClient.removeQueries({ queryKey: ["snippet", id] });
       void refresh();
       onDeleted();
     },

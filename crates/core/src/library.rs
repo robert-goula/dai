@@ -120,7 +120,12 @@ impl Library {
                 mtime: 0,
                 versions: d.versions.iter().skip(1).cloned().collect(),
             });
-        Ok(devdocs.chain(dash).collect())
+        // The DevDocs catalog occasionally lists a slug twice; keep the first.
+        let mut seen = std::collections::HashSet::new();
+        Ok(devdocs
+            .chain(dash)
+            .filter(|e| seen.insert(e.id.clone()))
+            .collect())
     }
 
     fn devdocs_catalog(&self, refresh: bool) -> Result<Vec<CatalogDoc>> {

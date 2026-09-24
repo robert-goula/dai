@@ -13,7 +13,7 @@ export function StartAtLogin() {
 
   return (
     <label
-      className={styles.footer}
+      className={styles.autostart}
       title="Keeps the DAI service running for your agents after you log in. The window doesn't open."
     >
       <input

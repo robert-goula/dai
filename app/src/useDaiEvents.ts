@@ -71,6 +71,13 @@ export function progressLabel(e: {
   return `Downloading ${(e.bytes / 1e6).toFixed(0)} MB`;
 }
 
+/** A catalog row's install state: its own id, or a pinned `<id>@<version>` install. */
+export function forCatalogEntry<V>(map: ReadonlyMap<string, V>, id: string): V | undefined {
+  if (map.has(id)) return map.get(id);
+  for (const [key, value] of map) if (key.startsWith(`${id}@`)) return value;
+  return undefined;
+}
+
 function withoutKey<K, V>(map: ReadonlyMap<K, V>, key: K): ReadonlyMap<K, V> {
   if (!map.has(key)) return map;
   const next = new Map(map);

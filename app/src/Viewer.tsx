@@ -10,6 +10,8 @@ type Props = {
   page: Page | null;
   /** Changes on every open, even of the same page. */
   openCount: number;
+  /** Light/dark scheme to apply inside the viewer (pages that support it). */
+  scheme: "light" | "dark";
 };
 
 /** Messages posted by the viewer shell inside the iframe (see daemon `viewer.rs`). */
@@ -20,8 +22,9 @@ type ShellMessage =
 
 type TocItem = { level: number; id: string; text: string };
 
-export function Viewer({ base, page, openCount }: Props) {
+export function Viewer({ base, page, openCount, scheme }: Props) {
   const frame = useRef<HTMLIFrameElement>(null);
+  const schemeRef = useRef(scheme);
   // What the iframe is actually showing; differs from `page` after in-page link clicks.
   const [shown, setShown] = useState<{ docset: string; path: string; title: string } | null>(null);
   const [toc, setToc] = useState<TocItem[]>([]);
@@ -35,6 +38,11 @@ export function Viewer({ base, page, openCount }: Props) {
       if (e.data.type === "dai:page") {
         setShown({ docset: e.data.docset, path: e.data.path, title: e.data.title });
         setToc([]);
+        // Each page load needs the current scheme.
+        (e.source as Window | null)?.postMessage(
+          { type: "dai:theme", scheme: schemeRef.current },
+          origin,
+        );
       } else if (e.data.type === "dai:toc") {
         setToc(e.data.items);
       } else if (e.data.type === "dai:external") {
@@ -52,6 +60,16 @@ export function Viewer({ base, page, openCount }: Props) {
       frame.current.src = contentUrl(base, page.docset, page.path);
     }
   }, [base, page, openCount]);
+
+  // Theme changes while a page is open.
+  useEffect(() => {
+    schemeRef.current = scheme;
+    if (base)
+      frame.current?.contentWindow?.postMessage(
+        { type: "dai:theme", scheme },
+        new URL(base).origin,
+      );
+  }, [base, scheme]);
 
   const scrollTo = (id: string) => {
     if (base)

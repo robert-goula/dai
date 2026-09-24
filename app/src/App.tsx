@@ -8,6 +8,7 @@ import { Search } from "./Search";
 import { SnippetEditor } from "./SnippetEditor";
 import { Snippets } from "./Snippets";
 import { StartAtLogin } from "./StartAtLogin";
+import { type Theme, useTheme } from "./theme";
 import { useDaiEvents } from "./useDaiEvents";
 import { Viewer } from "./Viewer";
 
@@ -39,6 +40,7 @@ export function App() {
     [],
   );
   const installState = useDaiEvents(open);
+  const { theme, scheme, choose: chooseTheme } = useTheme();
 
   // Launched from a `dai://open` link.
   useEffect(() => {
@@ -81,7 +83,19 @@ export function App() {
           <Snippets selected={main.kind === "snippet" ? main.id : null} onSelect={editSnippet} />
         )}
         {tab === "docsets" && <Docsets installState={installState} />}
-        <StartAtLogin />
+        <footer className={styles.footer}>
+          <StartAtLogin />
+          <select
+            className={styles.theme}
+            value={theme}
+            onChange={(e) => chooseTheme(e.target.value as Theme)}
+            aria-label="Theme"
+          >
+            <option value="system">System</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+        </footer>
       </aside>
       <main className={styles.main}>
         {base.error ? (
@@ -89,7 +103,12 @@ export function App() {
         ) : (
           // Kept mounted while editing snippets so the iframe keeps its history.
           <div className={styles.pane} hidden={main.kind !== "doc"}>
-            <Viewer base={base.data} page={opened?.page ?? null} openCount={opened?.n ?? 0} />
+            <Viewer
+              base={base.data}
+              page={opened?.page ?? null}
+              openCount={opened?.n ?? 0}
+              scheme={scheme}
+            />
           </div>
         )}
         {main.kind === "context7" && <Context7Panel key={main.n} initialQuery={main.query} />}

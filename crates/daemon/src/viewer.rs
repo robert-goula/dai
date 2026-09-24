@@ -2,15 +2,12 @@
 
 const STYLE: &str = r#"
 :root {
+  /* Follows the system unless the app sets `color-scheme` (see the theme message). */
   color-scheme: light dark;
-  --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --border: #d1d9e0;
-  --code-bg: #f6f8fa; --link: #0969da; --accent-bg: #ddf4ff;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #16181d; --fg: #e6e8eb; --muted: #9198a1; --border: #30363d;
-    --code-bg: #1f2329; --link: #58a6ff; --accent-bg: #16273d;
-  }
+  --bg: light-dark(#ffffff, #16181d); --fg: light-dark(#1f2328, #e6e8eb);
+  --muted: light-dark(#59636e, #9198a1); --border: light-dark(#d1d9e0, #30363d);
+  --code-bg: light-dark(#f6f8fa, #1f2329); --link: light-dark(#0969da, #58a6ff);
+  --accent-bg: light-dark(#ddf4ff, #16273d);
 }
 * { box-sizing: border-box; }
 html { background: var(--bg); color: var(--fg); }
@@ -33,10 +30,12 @@ th, td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; v
 blockquote, .note, ._note { margin: 1em 0; padding: 8px 14px; background: var(--accent-bg); border-radius: 6px; }
 img { max-width: 100%; }
 dt { font-weight: 600; margin-top: 1em; }
+hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
 "#;
 
 /// Reports the current page and its headings to the parent window, routes
-/// external links out to the system browser, and scrolls to headings on request.
+/// external links out to the system browser, and applies scroll and theme
+/// requests from the app.
 const SCRIPT: &str = r#"
 parent.postMessage({ type: "dai:page", docset: DAI_DOCSET, path: DAI_PATH, title: document.title }, "*");
 document.addEventListener("click", (e) => {
@@ -59,8 +58,13 @@ document.addEventListener("click", (e) => {
   parent.postMessage({ type: "dai:toc", items }, "*");
 }
 addEventListener("message", (e) => {
-  if (e.source !== parent || e.data?.type !== "dai:scroll") return;
-  document.getElementById(e.data.id)?.scrollIntoView({ block: "start" });
+  if (e.source !== parent) return;
+  if (e.data?.type === "dai:scroll") {
+    document.getElementById(e.data.id)?.scrollIntoView({ block: "start" });
+  } else if (e.data?.type === "dai:theme") {
+    // The app's light/dark choice. Pages with their own styling (Dash) ignore it.
+    document.documentElement.style.colorScheme = e.data.scheme;
+  }
 });
 "#;
 
