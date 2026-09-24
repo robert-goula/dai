@@ -96,10 +96,12 @@ claude mcp list        # should show: dai: dai mcp - ✔ Connected
 dai list               # docsets the tools can see; empty means install some first
 ```
 
-In a Claude Code session, `/mcp` lists the server and its tools. Try "search the docs for useEffect".
+Then **start a new Claude Code session**. A running session only knows the MCP servers it started with, so a server added or removed after it started won't show up (or will keep failing) in its `/mcp` until you restart. In the new session, `/mcp` lists `dai` and its tools. Try "search the docs for useEffect".
 
 ### Troubleshooting
 
+- **`/mcp` shows "Failed to reconnect to <name>":** check the name. The error is about that server, not necessarily `dai`. `claude mcp list` shows every server's status, and `claude mcp get <name>` shows where it's configured. A broken server registered for a parent folder (e.g. your home folder) shows up in every project below it.
+- **Added it but `/mcp` doesn't show it:** the session started before you added it. Start a new session.
 - **Not listed in another project:** it was added with local scope. Run `claude mcp remove dai -s local`, then add it again with `--scope user`.
 - **Fails to connect:** run `dai mcp` in a terminal. It should wait silently for input (Ctrl+C to exit). "command not found" means `~/.cargo/bin` isn't on the PATH Claude Code sees; register the absolute path instead. If it reports the service didn't start, check `<data dir>/daemon.log`. A common cause is another process on port 4747 (set `DAI_PORT`).
 - **Tools behave like an older version:** a service started by an older build is still running. Run `dai stop`; the next call starts the new one.
