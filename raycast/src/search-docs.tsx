@@ -1,5 +1,16 @@
 import { useRef, useState } from "react";
-import { Action, ActionPanel, Clipboard, Icon, Keyboard, List, open, showHUD, showToast, Toast } from "@raycast/api";
+import {
+  Action,
+  ActionPanel,
+  Clipboard,
+  Icon,
+  Keyboard,
+  List,
+  open,
+  showHUD,
+  showToast,
+  Toast,
+} from "@raycast/api";
 import { showFailureToast, usePromise } from "@raycast/utils";
 import { api, DaemonDownError, type Hit } from "./daemon";
 import { pageDetail } from "./lib/markdown";
@@ -29,11 +40,13 @@ export default function SearchDocs() {
     [hit?.docset ?? "", hit?.path ?? ""],
     { execute: hit !== undefined, abortable: docAbort, onError },
   );
-  const page = hit && doc.data?.docset === hit.docset && doc.data.path === hit.path ? doc.data : undefined;
+  const page =
+    hit && doc.data?.docset === hit.docset && doc.data.path === hit.path ? doc.data : undefined;
 
   // A cleared query stops `search` running, so its old error would otherwise stick around.
   const down =
-    docsets.error instanceof DaemonDownError || (query.trim() !== "" && search.error instanceof DaemonDownError);
+    docsets.error instanceof DaemonDownError ||
+    (query.trim() !== "" && search.error instanceof DaemonDownError);
   const retry = () => {
     docsets.revalidate();
     if (query.trim()) search.revalidate();
@@ -52,7 +65,11 @@ export default function SearchDocs() {
         <List.Dropdown tooltip="Docset" storeValue onChange={setDocset}>
           <List.Dropdown.Item title="All Docsets" value="" />
           {(docsets.data ?? []).map((d) => (
-            <List.Dropdown.Item key={d.id} title={d.version ? `${d.name} ${d.version}` : d.name} value={d.id} />
+            <List.Dropdown.Item
+              key={d.id}
+              title={d.version ? `${d.name} ${d.version}` : d.name}
+              value={d.id}
+            />
           ))}
         </List.Dropdown>
       }
@@ -88,7 +105,12 @@ export default function SearchDocs() {
   );
 }
 
-function DocsEmptyView(props: { loading: boolean; noDocsets: boolean; query: string; filtered: boolean }) {
+function DocsEmptyView(props: {
+  loading: boolean;
+  noDocsets: boolean;
+  query: string;
+  filtered: boolean;
+}) {
   // Avoid flashing "No results" while a search is in flight.
   if (props.loading) return <List.EmptyView title="" />;
   if (props.noDocsets) {
@@ -105,7 +127,8 @@ function DocsEmptyView(props: { loading: boolean; noDocsets: boolean; query: str
       />
     );
   }
-  if (!props.query) return <List.EmptyView icon={Icon.MagnifyingGlass} title="Search your installed docs" />;
+  if (!props.query)
+    return <List.EmptyView icon={Icon.MagnifyingGlass} title="Search your installed docs" />;
   return (
     <List.EmptyView
       icon={Icon.MagnifyingGlass}
@@ -148,8 +171,16 @@ function HitActions({ hit, url }: { hit: Hit; url: string | undefined }) {
       />
       {url ? (
         <>
-          <Action.OpenInBrowser title="Open Upstream URL" url={url} shortcut={Keyboard.Shortcut.Common.Open} />
-          <Action.CopyToClipboard title="Copy Upstream URL" content={url} shortcut={Keyboard.Shortcut.Common.Copy} />
+          <Action.OpenInBrowser
+            title="Open Upstream URL"
+            url={url}
+            shortcut={Keyboard.Shortcut.Common.Open}
+          />
+          <Action.CopyToClipboard
+            title="Copy Upstream URL"
+            content={url}
+            shortcut={Keyboard.Shortcut.Common.Copy}
+          />
         </>
       ) : null}
       <Action.CopyToClipboard

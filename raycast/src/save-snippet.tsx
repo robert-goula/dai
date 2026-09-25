@@ -71,7 +71,10 @@ export default function SaveSnippet() {
 
   // Seeds the language list; if the daemon is down we find out on submit.
   const existing = usePromise(() => api.snippets(""), [], { onError: () => {} });
-  const languages = languageOptions([...(existing.data ?? []).map((s) => s.language), values.language], typedLanguage);
+  const languages = languageOptions(
+    [...(existing.data ?? []).map((s) => s.language), values.language],
+    typedLanguage,
+  );
 
   return (
     <Form
@@ -95,7 +98,12 @@ export default function SaveSnippet() {
           <Form.Dropdown.Item key={l} value={l} title={l} />
         ))}
       </Form.Dropdown>
-      <Form.TextField title="Tags" placeholder="react, hooks" info="Comma-separated." {...itemProps.tags} />
+      <Form.TextField
+        title="Tags"
+        placeholder="react, hooks"
+        info="Comma-separated."
+        {...itemProps.tags}
+      />
       <Form.TextField title="Description" placeholder="What it's for" {...itemProps.description} />
       <Form.TextArea title="Code" enableMarkdown={false} {...itemProps.code} />
     </Form>

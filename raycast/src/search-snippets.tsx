@@ -24,10 +24,14 @@ export default function SearchSnippets() {
   const info = usePromise(() => api.info(), [], { onError });
 
   const abort = useRef<AbortController>(null);
-  const snippets = usePromise((q: string) => api.snippets(q, abort.current?.signal), [query.trim()], {
-    abortable: abort,
-    onError,
-  });
+  const snippets = usePromise(
+    (q: string) => api.snippets(q, abort.current?.signal),
+    [query.trim()],
+    {
+      abortable: abort,
+      onError,
+    },
+  );
 
   const down = info.error instanceof DaemonDownError || snippets.error instanceof DaemonDownError;
   const reload = () => {
@@ -59,7 +63,9 @@ export default function SearchSnippets() {
                 <Action
                   title="Save Snippet"
                   icon={Icon.Plus}
-                  onAction={() => launchCommand({ name: "save-snippet", type: LaunchType.UserInitiated })}
+                  onAction={() =>
+                    launchCommand({ name: "save-snippet", type: LaunchType.UserInitiated })
+                  }
                 />
               </ActionPanel>
             }
@@ -88,7 +94,13 @@ export default function SearchSnippets() {
                 }
               />
             }
-            actions={<SnippetActions snippet={s} snippetsDir={info.data?.snippets_dir} onDeleted={snippets.revalidate} />}
+            actions={
+              <SnippetActions
+                snippet={s}
+                snippetsDir={info.data?.snippets_dir}
+                onDeleted={snippets.revalidate}
+              />
+            }
           />
         ))
       )}
@@ -117,7 +129,12 @@ function SnippetActions({
       />
       {file ? (
         <>
-          <Action.Open title="Open File in Editor" target={file} icon={Icon.Pencil} shortcut={Keyboard.Shortcut.Common.Open} />
+          <Action.Open
+            title="Open File in Editor"
+            target={file}
+            icon={Icon.Pencil}
+            shortcut={Keyboard.Shortcut.Common.Open}
+          />
           <Action.ShowInFinder path={file} shortcut={{ modifiers: ["cmd", "shift"], key: "f" }} />
         </>
       ) : null}

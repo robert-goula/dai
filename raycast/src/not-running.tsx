@@ -22,7 +22,11 @@ export function NotRunningView({ onRetry }: { onRetry: () => void }) {
               try {
                 await open("dai://");
               } catch (e) {
-                await showToast({ style: Toast.Style.Failure, title: "Couldn't launch DAI", message: String(e) });
+                await showToast({
+                  style: Toast.Style.Failure,
+                  title: "Couldn't launch DAI",
+                  message: String(e),
+                });
               }
             }}
           />

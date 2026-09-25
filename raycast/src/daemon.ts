@@ -51,7 +51,10 @@ export type Snippet = {
   updated: string;
 };
 
-export type SnippetInput = Pick<Snippet, "title" | "language" | "tags" | "description" | "code" | "notes">;
+export type SnippetInput = Pick<
+  Snippet,
+  "title" | "language" | "tags" | "description" | "code" | "notes"
+>;
 
 export type Info = { version: string; snippets_dir: string };
 
@@ -93,7 +96,8 @@ async function send(path: string, init: RequestInit): Promise<Response> {
       headers: { ...init.headers, Authorization: `Bearer ${token}` },
     });
   } catch (e) {
-    if ((e as { cause?: { code?: string } }).cause?.code === "ECONNREFUSED") throw new DaemonDownError();
+    if ((e as { cause?: { code?: string } }).cause?.code === "ECONNREFUSED")
+      throw new DaemonDownError();
     throw e;
   }
 }
@@ -110,9 +114,15 @@ export const api = {
   info: () => request<Info>("/api/info"),
   docsets: (signal?: AbortSignal) => request<Docset[]>("/api/docsets", { signal }),
   search: (q: string, docsets: string[], signal?: AbortSignal) =>
-    request<Hit[]>(`/api/search?${new URLSearchParams({ q, docsets: docsets.join(","), limit: "50" })}`, { signal }),
+    request<Hit[]>(
+      `/api/search?${new URLSearchParams({ q, docsets: docsets.join(","), limit: "50" })}`,
+      { signal },
+    ),
   doc: (docset: string, path: string, maxChars: number, signal?: AbortSignal) =>
-    request<DocPage>(`/api/doc?${new URLSearchParams({ docset, path, max_chars: String(maxChars) })}`, { signal }),
+    request<DocPage>(
+      `/api/doc?${new URLSearchParams({ docset, path, max_chars: String(maxChars) })}`,
+      { signal },
+    ),
   snippets: (q: string, signal?: AbortSignal) =>
     request<Snippet[]>(`/api/snippets?${new URLSearchParams({ q })}`, { signal }),
   createSnippet: (input: SnippetInput) =>
@@ -122,7 +132,9 @@ export const api = {
       body: JSON.stringify(input),
     }),
   deleteSnippet: (id: string) =>
-    request<boolean>(`/api/snippets/${id.split("/").map(encodeURIComponent).join("/")}`, { method: "DELETE" }),
+    request<boolean>(`/api/snippets/${id.split("/").map(encodeURIComponent).join("/")}`, {
+      method: "DELETE",
+    }),
   open: (docset: string, path: string) =>
     request<"shown" | "launched">("/api/open", {
       method: "POST",

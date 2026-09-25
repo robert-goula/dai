@@ -21,5 +21,7 @@ export function snippetDetail(s: Snippet): string {
 
 /** The whole snippet as a standalone markdown document. */
 export function snippetMarkdown(s: Snippet): string {
-  return [`# ${s.title}`, s.description, fenced(s.code, s.language), s.notes.trim()].filter(Boolean).join("\n\n");
+  return [`# ${s.title}`, s.description, fenced(s.code, s.language), s.notes.trim()]
+    .filter(Boolean)
+    .join("\n\n");
 }

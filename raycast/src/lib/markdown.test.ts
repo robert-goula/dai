@@ -39,11 +39,15 @@ const snippet = (over: Partial<Snippet>): Snippet => ({
 
 test("snippet detail is the fenced code, after any description", () => {
   expect(snippetDetail(snippet({}))).toBe("```ts\nconst x = 1;\n```");
-  expect(snippetDetail(snippet({ description: "Waits." }))).toBe("Waits.\n\n```ts\nconst x = 1;\n```");
+  expect(snippetDetail(snippet({ description: "Waits." }))).toBe(
+    "Waits.\n\n```ts\nconst x = 1;\n```",
+  );
 });
 
 test("fence outgrows backticks in the code", () => {
-  expect(snippetDetail(snippet({ language: "md", code: "```js\nx\n```" }))).toBe("````md\n```js\nx\n```\n````");
+  expect(snippetDetail(snippet({ language: "md", code: "```js\nx\n```" }))).toBe(
+    "````md\n```js\nx\n```\n````",
+  );
 });
 
 test("snippet markdown has title, description, code, and notes", () => {

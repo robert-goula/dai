@@ -1,6 +1,13 @@
 /** `"react, hooks,,  "` → `["react", "hooks"]`, deduped. */
 export function parseTags(text: string): string[] {
-  return [...new Set(text.split(",").map((t) => t.trim()).filter(Boolean))];
+  return [
+    ...new Set(
+      text
+        .split(",")
+        .map((t) => t.trim())
+        .filter(Boolean),
+    ),
+  ];
 }
 
 /** Dropdown choices: languages already in use (sorted), plus what's being typed if it's new. */
