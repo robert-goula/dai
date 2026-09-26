@@ -84,6 +84,16 @@ impl Source {
     /// library → `<name>-context7`.
     pub fn default_name(&self) -> String {
         match self {
+            Self::Llms { url } if is_local(url) => {
+                // `~/repos/effect/LLMS.md` → `effect`
+                let path = Path::new(url);
+                let dir = path.parent().and_then(|p| p.file_name());
+                slugify(
+                    dir.or(path.file_stem())
+                        .and_then(|n| n.to_str())
+                        .unwrap_or(url),
+                )
+            }
             Self::Llms { url } => {
                 let Ok(u) = reqwest::Url::parse(url) else {
                     return slugify(url);
@@ -236,6 +246,16 @@ fn today() -> String {
 // --- llms.txt -------------------------------------------------------------
 
 fn llms(url: &str, progress: &(dyn Fn(u64, Option<u64>) + Sync)) -> Result<Generated> {
+    // A local file (e.g. a repo's LLMS.md) is taken as full content.
+    if is_local(url) {
+        let text = std::fs::read_to_string(url).with_context(|| format!("reading {url}"))?;
+        return Ok(Generated {
+            version: today(),
+            pages: split_by_h1(&text),
+            assets: vec![],
+            _tmp: None,
+        });
+    }
     let http = crate::net::client(Some(Duration::from_secs(60)))?;
     let base = url.trim_end_matches('/');
     let candidates: Vec<String> = if base.ends_with(".txt") || base.ends_with(".md") {
@@ -272,6 +292,10 @@ fn llms(url: &str, progress: &(dyn Fn(u64, Option<u64>) + Sync)) -> Result<Gener
         });
     }
     bail!("no llms-full.txt or llms.txt found at {url}")
+}
+
+fn is_local(url: &str) -> bool {
+    !url.starts_with("http://") && !url.starts_with("https://")
 }
 
 /// Splits an `llms-full.txt` concatenation into one page per `# ` section.
@@ -650,6 +674,7 @@ mod tests {
             "tanstack-query"
         );
         assert_eq!(llms("https://docs.astro.build/"), "astro");
+        assert_eq!(llms("/home/me/repos/effect-ts/LLMS.md"), "effect-ts");
         let repo = |u: &str| {
             Source::Repo {
                 url: u.into(),
@@ -673,6 +698,19 @@ mod tests {
         let paths: Vec<_> = pages.iter().map(|p| p.path.as_str()).collect();
         assert_eq!(paths, ["index.md", "intro.md", "intro-2.md"]);
         assert!(pages[1].markdown.contains("# not a page"));
+    }
+
+    #[test]
+    fn local_llms_file_splits_on_h1() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("LLMS.md");
+        std::fs::write(&file, "# Effect\n## Services\ntext\n").unwrap();
+        let source = Source::Llms {
+            url: file.to_string_lossy().into(),
+        };
+        let pages = fetch(&source, &|_, _| {}).unwrap().pages;
+        let paths: Vec<_> = pages.iter().map(|p| p.path.as_str()).collect();
+        assert_eq!(paths, ["effect.md"]);
     }
 
     #[test]

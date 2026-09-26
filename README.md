@@ -48,6 +48,7 @@ From a site's `llms-full.txt` / `llms.txt`:
 ```shell
 dai generate llms https://hono.dev
 dai generate llms https://tanstack.com/query/latest/llms.txt --name "tanstack query"
+dai generate llms ~/repos/effect-ts/LLMS.md --name effect   # local file, split at `# ` headings
 ```
 
 Generate documents from a repository (README plus `docs/`-style folders):

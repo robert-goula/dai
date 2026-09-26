@@ -118,7 +118,8 @@ enum Command {
 
 #[derive(Subcommand)]
 enum GenerateSource {
-    /// From a site's llms-full.txt / llms.txt (site root or the file's URL).
+    /// From a site's llms-full.txt / llms.txt (site root or the file's URL),
+    /// or a local file like a repo's LLMS.md.
     Llms { url: String },
     /// From a git repo's README and docs folders.
     Repo {
@@ -316,7 +317,15 @@ async fn main() -> Result<()> {
         },
         (Command::Generate { source, name }, c) => {
             let source = match source {
-                GenerateSource::Llms { url } => generate::Source::Llms { url },
+                GenerateSource::Llms { url }
+                    if url.starts_with("http://") || url.starts_with("https://") =>
+                {
+                    generate::Source::Llms { url }
+                }
+                // A local file; the daemon resolves paths, so make it absolute here.
+                GenerateSource::Llms { url } => generate::Source::Llms {
+                    url: std::path::absolute(&url)?.to_string_lossy().into_owned(),
+                },
                 GenerateSource::Repo { url, git_ref } => generate::Source::Repo { url, git_ref },
                 GenerateSource::Dir { path } => generate::Source::Dir {
                     // The daemon resolves paths, so make it absolute here.
