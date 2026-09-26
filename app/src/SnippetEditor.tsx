@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { api } from "./api";
 import styles from "./SnippetEditor.module.css";
 import { emptyDraft, type SnippetDraft, toDraft, toInput } from "./snippetForm";
@@ -21,6 +21,16 @@ export function SnippetEditor({ id, onSaved, onDeleted }: Props) {
   const [draft, setDraft] = useState<SnippetDraft>(emptyDraft);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [copied, setCopied] = useState(false);
+  const codeRef = useRef<HTMLTextAreaElement>(null);
+
+  // Grow the code field to fit its content; the editor pane scrolls instead.
+  useLayoutEffect(() => {
+    const el = codeRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    // offsetHeight - clientHeight covers borders and a horizontal scrollbar.
+    el.style.height = `${el.scrollHeight + el.offsetHeight - el.clientHeight}px`;
+  }, [draft.code]);
 
   // Load the snippet into the form when it's first fetched or its file actually
   // changes (`updated`), not on every refetch; other snippets changing triggers
@@ -128,6 +138,7 @@ export function SnippetEditor({ id, onSaved, onDeleted }: Props) {
       <label className={styles.codeLabel}>
         Code
         <textarea
+          ref={codeRef}
           className={styles.code}
           value={draft.code}
           onChange={set("code")}
